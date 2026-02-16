@@ -1,0 +1,28 @@
+# Build folders
+ui/build/
+*/build/
+
+# Python venv
+.venv/
+venv/
+
+# Logs
+logs/
+*.log
+
+# CMake generated
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Qt generated
+*.qmlc
+*.jsc
+*.rcc
+*.aotstats
+.rcc/
+
+# OS
+*.swp
+*.tmp

@@ -1,0 +1,4 @@
+module Veya
+
+singleton VehicleDataProvider 1.0 providers/VehicleDataProvider.qml
+GaugeRing 1.0 components/GaugeRing.qml

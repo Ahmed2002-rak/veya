@@ -1,0 +1,126 @@
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+
+import Veya 1.0         // for VehicleDataProvider singleton
+import "components"     // GaugeRing
+
+Page {
+    id: root
+    property var nav: null
+    background: Rectangle { color: "transparent" }
+
+    // Background
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0B0F14" }
+            GradientStop { position: 1.0; color: "#070A0E" }
+        }
+    }
+
+    // Top status bar (minimal)
+    RowLayout {
+        id: topBar
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 16
+        spacing: 12
+
+        Button {
+            text: "←"
+            onClicked: if (root.nav) root.nav.pop()
+        }
+
+        Item { Layout.fillWidth: true }
+
+        Text {
+            text: VehicleDataProvider.connected ? "CONNECTED" : "DISCONNECTED"
+            color: VehicleDataProvider.connected ? "#22E6B8" : "#FF5A5A"
+            font.pixelSize: 14
+            font.bold: true
+        }
+    }
+
+    // Main cluster
+    RowLayout {
+        anchors.top: topBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 18
+        spacing: 18
+
+        // Left gauge (RPM)
+        GaugeRing {
+            Layout.preferredWidth: 320
+            Layout.preferredHeight: 320
+            min: 0
+            max: 8000
+            value: VehicleDataProvider.rpm
+            unit: "rpm"
+            label: "RPM"
+            accent: "#7CFF4A"
+        }
+
+        // Center (road + car placeholder)
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width, 420)
+                height: Math.min(parent.height, 360)
+                radius: 28
+                color: "rgba(255,255,255,0.04)"
+                border.color: "rgba(255,255,255,0.08)"
+                border.width: 1
+
+                // simple road
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width * 0.36
+                    height: parent.height * 0.90
+                    radius: 18
+                    color: "rgba(0,0,0,0.35)"
+                }
+
+                // “car” placeholder
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 70
+                    height: 110
+                    radius: 14
+                    color: "rgba(255,255,255,0.12)"
+                    border.color: "rgba(255,255,255,0.18)"
+                }
+
+                // gear line (placeholder)
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 14
+                    text: "P  R  N  D"
+                    color: "rgba(255,255,255,0.55)"
+                    font.pixelSize: 16
+                    letterSpacing: 6
+                }
+            }
+        }
+
+        // Right gauge (Speed)
+        GaugeRing {
+            Layout.preferredWidth: 320
+            Layout.preferredHeight: 320
+            min: 0
+            max: 240
+            value: VehicleDataProvider.speedKph
+            unit: "km/h"
+            label: "SPEED"
+            accent: "#22E6B8"
+        }
+    }
+}
