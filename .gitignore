@@ -2,6 +2,9 @@
 ui/build/
 */build/
 
+# Reference UI repos (read-only visual references; not part of VEYA build)
+external_ui/
+
 # Python venv
 .venv/
 venv/
@@ -23,6 +26,12 @@ Makefile
 *.aotstats
 .rcc/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
 # OS
 *.swp
 *.tmp
+.DS_Store

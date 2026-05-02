@@ -1,92 +1,533 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Veya 1.0
 
-// Use Page for StackView (best practice), avoids anchor conflicts (conflits d’ancrage)
 Page {
-    id: page
-    title: "Diagnostic"
+    id: root
+
     property var nav: null
+    background: Rectangle { color: "transparent" }
 
-    // OLD (kept):
-    // Item { anchors.fill: parent ... }
-
-    background: Rectangle {
-        color: "transparent"
+    function clamp(x, a, b) { return Math.max(a, Math.min(b, x)) }
+    function ts() {
+        const d = new Date()
+        return ("0" + d.getHours()).slice(-2)   + ":" +
+               ("0" + d.getMinutes()).slice(-2) + ":" +
+               ("0" + d.getSeconds()).slice(-2)
+    }
+    function appendLine(line) {
+        outputArea.text += "[" + ts() + "] " + line + "\n"
+        outputArea.cursorPosition = outputArea.length
     }
 
+    // ── Palette (matches Drive.qml) ──────────────────────────────────────
+    readonly property color cBg:     "#0B0F14"
+    readonly property color cBorder: "#1A4040"
+    readonly property color cCyan:   "#4DD2FF"
+    readonly property color cGreen:  "#7CFF4A"
+    readonly property color cWarn:   "#FF4D6D"
+    readonly property color cAmber:  "#FFD84D"
+    readonly property color cText:   "white"
+    readonly property color cDim:    Qt.rgba(1, 1, 1, 0.55)
+
     component GlassCard: Rectangle {
-        radius: 22
-        color: Qt.rgba(1, 1, 1, 0.06)
-        border.color: Qt.rgba(1, 1, 1, 0.10)
+        radius: 16
+        color:  Qt.rgba(1, 1, 1, 0.04)
+        border.color: Qt.rgba(1, 1, 1, 0.09)
         border.width: 1
     }
 
+    component MetricTile: Rectangle {
+        property string label: "LABEL"
+        property string val:   "0"
+        property string unit:  ""
+        property color  accent: root.cCyan
+
+        radius: 12
+        color:  Qt.rgba(1, 1, 1, 0.04)
+        border.color: Qt.rgba(1, 1, 1, 0.09)
+        border.width: 1
+
+        Column {
+            anchors {
+                left: parent.left; leftMargin: 12
+                verticalCenter: parent.verticalCenter
+            }
+            spacing: 4
+            Text {
+                text: parent.parent.label
+                color: root.cDim
+                font.pixelSize: 9
+                font.letterSpacing: 1.6
+                font.family: "DejaVu Sans"
+            }
+            Row {
+                spacing: 4
+                Text {
+                    id: vlbl
+                    text: parent.parent.parent.val
+                    color: parent.parent.parent.accent
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: "DejaVu Sans"
+                }
+                Text {
+                    anchors.baseline: vlbl.baseline
+                    text: parent.parent.parent.unit
+                    color: root.cDim
+                    font.pixelSize: 11
+                    font.family: "DejaVu Sans"
+                }
+            }
+        }
+    }
+
+    // ── Background ───────────────────────────────────────────────────────
+    Rectangle {
+        anchors.fill: parent
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0B0F14" }
+            GradientStop { position: 1.0; color: "#070A0E" }
+        }
+        Repeater {
+            model: 60
+            Rectangle {
+                width: 2; height: 2; radius: 1
+                color: Qt.rgba(1, 1, 1, 0.07)
+                x: Math.random() * parent.width
+                y: Math.random() * parent.height
+            }
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 8
+        color: "transparent"
+        border.color: root.cBorder; border.width: 2
+        radius: 24
+    }
+
+    // ── DTC model (populated in mock mode by "Read DTC") ─────────────────
+    ListModel { id: dtcModel }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  MAIN LAYOUT
+    // ══════════════════════════════════════════════════════════════════════
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 22
-        spacing: 14
+        spacing: 12
 
+        // ── TOP STRIP ─────────────────────────────────────────────────────
         RowLayout {
             Layout.fillWidth: true
+            Layout.preferredHeight: root.height * 0.08
             spacing: 12
 
-            Button {
-                text: "← Back"
-                onClicked: {
-                    if (nav) nav.pop()
-                    // old (kept): StackView.view.pop()
+            // Back button
+            Rectangle {
+                Layout.preferredWidth: 92
+                Layout.preferredHeight: 36
+                Layout.alignment: Qt.AlignVCenter
+                radius: 8
+                color: backMouse.containsMouse ? Qt.rgba(0.30, 0.82, 1, 0.14)
+                                               : Qt.rgba(1, 1, 1, 0.05)
+                border.color: Qt.rgba(1, 1, 1, 0.10); border.width: 1
+                Behavior on color { ColorAnimation { duration: 150 } }
+                Text {
+                    anchors.centerIn: parent
+                    text: "← Back"; color: root.cCyan
+                    font.pixelSize: 13; font.family: "DejaVu Sans"
+                }
+                MouseArea {
+                    id: backMouse
+                    anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (root.nav) root.nav.pop()
                 }
             }
 
+            // Title
             Text {
-                text: "Profile 3 – Diagnostic"
-                color: "white"
-                font.pixelSize: 20
+                Layout.alignment: Qt.AlignVCenter
+                text: "DIAGNOSTIC"
+                color: root.cText
+                font.pixelSize: 18
                 font.bold: true
+                font.letterSpacing: 4
+                font.family: "DejaVu Sans"
             }
 
             Item { Layout.fillWidth: true }
+
+            // Connection badge + DemoBadge stacked
+            ColumnLayout {
+                Layout.alignment: Qt.AlignVCenter
+                spacing: 4
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignRight
+                    Layout.preferredHeight: 28
+                    Layout.preferredWidth: badgeRow.implicitWidth + 22
+                    radius: 14
+                    color: {
+                        if (!VehicleDataProvider.connected)
+                            return Qt.rgba(1, 0.30, 0.43, 0.12)
+                        return VehicleDataProvider.dataMode === "elm"
+                            ? Qt.rgba(0.47, 1, 0.60, 0.10)
+                            : Qt.rgba(0.30, 0.82, 1, 0.10)
+                    }
+                    border.color: {
+                        if (!VehicleDataProvider.connected) return root.cWarn
+                        return VehicleDataProvider.dataMode === "elm"
+                            ? "#47FF9A" : root.cCyan
+                    }
+                    border.width: 1
+                    Behavior on color        { ColorAnimation { duration: 400 } }
+                    Behavior on border.color { ColorAnimation { duration: 400 } }
+
+                    Row {
+                        id: badgeRow
+                        anchors.centerIn: parent
+                        spacing: 7
+
+                        Rectangle {
+                            width: 7; height: 7; radius: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: {
+                                if (!VehicleDataProvider.connected) return root.cWarn
+                                return VehicleDataProvider.dataMode === "elm"
+                                    ? "#47FF9A" : root.cCyan
+                            }
+                            SequentialAnimation on opacity {
+                                running: !VehicleDataProvider.connected
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.2; duration: 600 }
+                                NumberAnimation { to: 1.0; duration: 600 }
+                            }
+                        }
+                        Text {
+                            text: {
+                                if (!VehicleDataProvider.connected) return "OFFLINE"
+                                const m = VehicleDataProvider.dataMode
+                                return m === "elm"  ? "ELM"
+                                     : m === "mock" ? "MOCK"
+                                     :                "—"
+                            }
+                            color: root.cText
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.letterSpacing: 1.4
+                            font.family: "DejaVu Sans"
+                        }
+                    }
+                }
+
+                DemoBadge {
+                    Layout.alignment: Qt.AlignRight
+                }
+            }
         }
 
-        GlassCard {
+        // ── MAIN AREA: 2 panels ───────────────────────────────────────────
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            spacing: 14
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 18
-                spacing: 12
+            // ── LEFT PANEL (40%): DTC CODES ───────────────────────────────
+            GlassCard {
+                Layout.fillHeight: true
+                Layout.preferredWidth: root.width * 0.40
 
-                Text {
-                    text: "Diagnostic Controls (mock for now)"
-                    color: "white"
-                    font.pixelSize: 18
-                    font.bold: true
+                ColumnLayout {
+                    anchors { fill: parent; margins: 18 }
+                    spacing: 12
+
+                    Text {
+                        text: "DTC CODES"
+                        color: root.cDim
+                        font.pixelSize: 12
+                        font.letterSpacing: 3
+                        font.family: "DejaVu Sans"
+                    }
+
+                    // List + empty placeholder
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+
+                        ListView {
+                            id: dtcList
+                            anchors.fill: parent
+                            model: dtcModel
+                            spacing: 8
+                            clip: true
+                            visible: dtcModel.count > 0
+
+                            delegate: Rectangle {
+                                width: ListView.view.width
+                                height: 56
+                                radius: 10
+                                color:  Qt.rgba(1, 1, 1, 0.04)
+                                border.color: Qt.rgba(1, 0.30, 0.43, 0.40)
+                                border.width: 1
+
+                                required property string code
+                                required property string desc
+
+                                Column {
+                                    anchors {
+                                        left: parent.left; leftMargin: 14
+                                        verticalCenter: parent.verticalCenter
+                                    }
+                                    spacing: 4
+                                    Text {
+                                        text:  parent.parent.code
+                                        color: root.cWarn
+                                        font.family:    "DejaVu Sans Mono"
+                                        font.pixelSize: 18
+                                        font.bold:      true
+                                    }
+                                    Text {
+                                        text:  parent.parent.desc
+                                        color: root.cDim
+                                        font.family:    "DejaVu Sans"
+                                        font.pixelSize: 11
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: dtcModel.count === 0
+                            text: "No fault codes"
+                            color: root.cDim
+                            font.pixelSize: 14
+                            font.family: "DejaVu Sans"
+                        }
+                    }
+
+                    // Read / Clear buttons
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Button {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            text: "Read DTC"
+                            font.family: "DejaVu Sans"
+                            font.bold: true
+                            background: Rectangle {
+                                radius: 8
+                                color: parent.hovered ? Qt.rgba(0.30, 0.82, 1, 0.18)
+                                                      : Qt.rgba(0.30, 0.82, 1, 0.10)
+                                border.color: root.cCyan; border.width: 1
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: root.cCyan
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                font: parent.font
+                            }
+                            onClicked: {
+                                if (VehicleDataProvider.dataMode === "mock") {
+                                    dtcModel.clear()
+                                    dtcModel.append({
+                                        code: "P0300",
+                                        desc: "Random/Multiple Cylinder Misfire"
+                                    })
+                                    dtcModel.append({
+                                        code: "P0420",
+                                        desc: "Catalyst System Efficiency Below Threshold"
+                                    })
+                                    dtcModel.append({
+                                        code: "P0171",
+                                        desc: "System Too Lean (Bank 1)"
+                                    })
+                                    appendLine("[mock] 3 codes read")
+                                } else {
+                                    appendLine("Feature available after backend update — REAL DTC reading reserved for Phase 3.")
+                                }
+                            }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            text: "Clear DTC"
+                            font.family: "DejaVu Sans"
+                            font.bold: true
+                            background: Rectangle {
+                                radius: 8
+                                color: parent.hovered ? Qt.rgba(1, 0.30, 0.43, 0.18)
+                                                      : Qt.rgba(1, 0.30, 0.43, 0.10)
+                                border.color: root.cWarn; border.width: 1
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: root.cWarn
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                font: parent.font
+                            }
+                            onClicked: {
+                                dtcModel.clear()
+                                appendLine("DTC list cleared")
+                            }
+                        }
+                    }
                 }
+            }
 
-                Text {
-                    text: "No car connected yet. We will add real ELM327 logic later.\nFor now, UI + services + networking are validated."
-                    color: Qt.rgba(1,1,1,0.65)
-                    font.pixelSize: 13
-                    wrapMode: Text.WordWrap
-                }
+            // ── RIGHT PANEL (60%): LIVE DATA ──────────────────────────────
+            GlassCard {
+                Layout.fillHeight: true
+                Layout.preferredWidth: root.width * 0.60
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-                    Button { text: "Read DTC"; onClicked: console.text += "Read DTC clicked (placeholder)\n" }
-                    Button { text: "Send to server"; onClicked: console.text += "Send clicked (placeholder)\n" }
-                    Button { text: "Start live scan"; onClicked: console.text += "Start scan clicked (placeholder)\n" }
-                    Button { text: "Stop"; onClicked: console.text += "Stop clicked (placeholder)\n" }
-                }
+                ColumnLayout {
+                    anchors { fill: parent; margins: 18 }
+                    spacing: 12
 
-                TextArea {
-                    id: console
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    readOnly: true
-                    text: "Console:\n"
+                    Text {
+                        text: "LIVE DATA"
+                        color: root.cDim
+                        font.pixelSize: 12
+                        font.letterSpacing: 3
+                        font.family: "DejaVu Sans"
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: 4
+                        rowSpacing: 8
+                        columnSpacing: 8
+
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "RPM"
+                            val:   Math.round(VehicleDataProvider.rpm).toString()
+                            unit:  ""
+                            accent: root.cGreen
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "SPEED"
+                            val:   VehicleDataProvider.speedKph.toFixed(1)
+                            unit:  "km/h"
+                            accent: root.cCyan
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "COOLANT"
+                            val:   VehicleDataProvider.coolantC.toFixed(1)
+                            unit:  "°C"
+                            accent: VehicleDataProvider.warnCoolantHigh ? root.cWarn : root.cCyan
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "BATTERY"
+                            val:   VehicleDataProvider.batteryV.toFixed(1)
+                            unit:  "V"
+                            accent: VehicleDataProvider.warnLowBattery ? root.cWarn : "#47FF9A"
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "FUEL"
+                            val:   VehicleDataProvider.fuelLevel.toFixed(0)
+                            unit:  "%"
+                            accent: VehicleDataProvider.warnLowFuel ? root.cAmber : "#47FF9A"
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "THROTTLE"
+                            val:   VehicleDataProvider.throttlePct.toFixed(0)
+                            unit:  "%"
+                            accent: root.cCyan
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "ENGINE LOAD"
+                            val:   VehicleDataProvider.engineLoad.toFixed(0)
+                            unit:  "%"
+                            accent: VehicleDataProvider.engineLoad > 80 ? root.cWarn
+                                  : VehicleDataProvider.engineLoad > 60 ? root.cAmber
+                                  :                                       root.cGreen
+                        }
+                        MetricTile {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 60
+                            label: "INTAKE"
+                            val:   VehicleDataProvider.intakeTempC.toFixed(1)
+                            unit:  "°C"
+                            accent: root.cCyan
+                        }
+                    }
+
+                    // Console output area (was id: console — now id: outputArea)
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 10
+                        color: Qt.rgba(0, 0, 0, 0.40)
+                        border.color: Qt.rgba(1, 1, 1, 0.10)
+                        border.width: 1
+
+                        ScrollView {
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            clip: true
+
+                            TextArea {
+                                id: outputArea
+                                readOnly: true
+                                wrapMode: TextEdit.Wrap
+                                color: root.cText
+                                font.family: "DejaVu Sans Mono"
+                                font.pixelSize: 12
+                                background: null
+                                text: "Diagnostic console ready.\n"
+                            }
+                        }
+                    }
+
+                    // "Send to server" — disabled (Phase 3)
+                    Button {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 38
+                        text: "Send to server"
+                        font.family: "DejaVu Sans"
+                        font.bold: true
+                        enabled: false
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Server not configured (Phase 3)"
+                        background: Rectangle {
+                            radius: 8
+                            color: Qt.rgba(1, 1, 1, 0.04)
+                            border.color: Qt.rgba(1, 1, 1, 0.10); border.width: 1
+                        }
+                        contentItem: Text {
+                            text: parent.text
+                            color: root.cDim
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            font: parent.font
+                        }
+                    }
                 }
             }
         }

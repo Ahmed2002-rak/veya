@@ -1,4 +1,9 @@
 module Veya
 
 singleton VehicleDataProvider 1.0 providers/VehicleDataProvider.qml
-GaugeRing 1.0 components/GaugeRing.qml
+GaugeRing       1.0 components/GaugeRing.qml
+StatusIconBar   1.0 components/StatusIconBar.qml
+CarSilhouette   1.0 components/CarSilhouette.qml
+GearIndicator   1.0 components/GearIndicator.qml
+DemoBadge       1.0 components/DemoBadge.qml
+SpeedBar        1.0 components/SpeedBar.qml

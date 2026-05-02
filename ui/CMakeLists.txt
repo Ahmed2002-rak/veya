@@ -22,10 +22,21 @@ qt_add_qml_module(veya_ui
         qml/Diagnostic.qml
         qml/providers/VehicleDataProvider.qml
         qml/components/GaugeRing.qml
+        qml/components/StatusIconBar.qml
+        qml/components/CarSilhouette.qml
+        qml/components/GearIndicator.qml
+        qml/components/DemoBadge.qml
+        qml/components/SpeedBar.qml
 
     RESOURCES
         qml/qmldir
+        qml/assets/icon_music.svg
+        qml/assets/icon_menu.svg
+        qml/assets/icon_car.svg
+        qml/assets/icon_phone.svg
+        qml/assets/icon_settings.svg
+        qml/assets/icon_headlights.svg
+        qml/assets/car_silhouette.png
 )
 
 target_link_libraries(veya_ui PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::WebSockets)
-

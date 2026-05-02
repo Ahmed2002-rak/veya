@@ -1,25 +1,98 @@
 #!/bin/bash
+# ════════════════════════════════════════════════════════════════════
+#  VEYA Kiosk Launch Script                           start_veya.sh
+#  Boots the OBD service then the Qt UI.
+#
+#  Usage:
+#    ./start_veya.sh                              mock mode (default)
+#    ./start_veya.sh --mode elm                   real ELM327
+#    ./start_veya.sh --mode elm --elm-port /dev/ttyUSB1
+#    ./start_veya.sh --mode elm --hz 4
+# ════════════════════════════════════════════════════════════════════
+
 set -e
-mkdir -p /home/pfe/veya/logs
-exec >>/home/pfe/veya/logs/kiosk.log 2>&1
 
-echo "=== VEYA KIOSK START ==="
-date
+# ── Defaults ────────────────────────────────────────────────────────
+MODE="mock"
+ELM_PORT="/dev/ttyUSB0"
+ELM_BAUD="38400"
+HZ=""
 
-cd /home/pfe/veya
-source /home/pfe/veya/.venv/bin/activate
+# ── Parse args ──────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)     MODE="$2";     shift 2 ;;
+        --elm-port) ELM_PORT="$2"; shift 2 ;;
+        --elm-baud) ELM_BAUD="$2"; shift 2 ;;
+        --hz)       HZ="$2";       shift 2 ;;
+        *)          shift ;;
+    esac
+done
 
-# Kill anything already using 8765 (prevents bind errors after crashes/restarts)
-if ss -ltnp | grep -q '127.0.0.1:8765'; then
-  PID=$(ss -ltnp | awk '/127\.0\.0\.1:8765/ {match($0,/pid=([0-9]+)/,a); if(a[1]!=""){print a[1]; exit}}')
-  if [ -n "$PID" ]; then
-    echo "Killing process on 8765: pid=$PID"
-    kill "$PID" || true
-    sleep 0.2
-  fi
+# ── Logging ─────────────────────────────────────────────────────────
+VEYA_HOME="/home/pfe/veya"
+mkdir -p "$VEYA_HOME/logs"
+exec >> "$VEYA_HOME/logs/kiosk.log" 2>&1
+
+echo ""
+echo "══════════════════════════════════════════════"
+echo "  VEYA START  —  mode: $MODE  —  $(date)"
+echo "══════════════════════════════════════════════"
+
+# ── Kill any existing backend on port 8765 ───────────────────────────
+if ss -ltnp 2>/dev/null | grep -q '127\.0\.0\.1:8765'; then
+    PID=$(ss -tlnp 2>/dev/null | grep ':8765' | grep -oP 'pid=\K[0-9]+' | head -n1)
+    if [ -n "$PID" ]; then
+        echo "[start_veya] Killing existing obd_service pid=$PID"
+        kill "$PID" 2>/dev/null || true
+        sleep 0.4
+    fi
 fi
 
-python services/obd_service/obd_service.py --mode mock --hz 10 >>logs/obd_service.log 2>&1 &
+cd "$VEYA_HOME"
+source "$VEYA_HOME/.venv/bin/activate"
 
-/home/pfe/veya/ui/build/veya_ui >>logs/veya_ui.log 2>&1
-echo "VEYA exited with code=$?"
+# ── Build OBD service argument list ─────────────────────────────────
+OBD_ARGS="--mode $MODE --elm-port $ELM_PORT --elm-baud $ELM_BAUD"
+[ -n "$HZ" ] && OBD_ARGS="$OBD_ARGS --hz $HZ"
+
+echo "[start_veya] Starting obd_service: $OBD_ARGS"
+python services/obd_service/obd_service.py $OBD_ARGS >> "$VEYA_HOME/logs/obd_service.log" 2>&1 &
+OBD_PID=$!
+echo "[start_veya] obd_service PID: $OBD_PID"
+
+# ── Wait until WebSocket is ready (max 6 s, check every 0.5 s) ──────
+echo "[start_veya] Waiting for ws://127.0.0.1:8765 …"
+READY=0
+for i in $(seq 1 12); do
+    if python -c "
+import socket, sys
+s = socket.socket()
+s.settimeout(0.4)
+try:
+    s.connect(('127.0.0.1', 8765))
+    s.close()
+    sys.exit(0)
+except:
+    sys.exit(1)
+" 2>/dev/null; then
+        echo "[start_veya] WebSocket ready (attempt $i / 12)"
+        READY=1
+        break
+    fi
+    sleep 0.5
+done
+
+if [ "$READY" -eq 0 ]; then
+    echo "[start_veya] WARNING: WebSocket not ready after 6 s — launching UI anyway"
+fi
+
+# ── Launch Qt UI ─────────────────────────────────────────────────────
+echo "[start_veya] Launching veya_ui …"
+"$VEYA_HOME/ui/build/veya_ui" >> "$VEYA_HOME/logs/veya_ui.log" 2>&1
+UI_CODE=$?
+echo "[start_veya] veya_ui exited with code=$UI_CODE"
+
+# ── Cleanup ──────────────────────────────────────────────────────────
+kill "$OBD_PID" 2>/dev/null || true
+echo "[start_veya] Done."
