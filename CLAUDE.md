@@ -2,7 +2,20 @@
 
 > Claude Code reads this file automatically at session start.
 > It is the single source of truth. Update after every milestone.
-> Last updated: March 2026 — after mode-switch integration.
+> Last updated: May 2026 — after Phase 2.0 architecture refactor.
+
+---
+
+## REQUIRED READING (read in order before touching code)
+
+After this file, open these in this exact order. Each one is short and they are mutually consistent — newest understanding lives in the later docs.
+
+1. **[`docs/MEMORY.md`](docs/MEMORY.md)** — current project state, the phase plan, decisions worth remembering, conventions, shortcuts, traps. Start here so you know which phase we're in and what NOT to redo.
+2. **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — three-process layout (source → core → UI), the two wires, layer-by-layer walkthrough, mode-switch flow.
+3. **[`docs/CONTRACT.md`](docs/CONTRACT.md)** — source-to-core wire protocol (TCP, line-JSON). Authoritative spec for any new source (ESP32 firmware, custom CAN board, …). The UI WS schema is *not* this — it's the legacy one documented in §"WebSocket JSON contract" below.
+4. **[`VEYA_DASHBOARD_ARCHITECTURE.md`](VEYA_DASHBOARD_ARCHITECTURE.md)** — Phase-1 architecture document. Still useful as reference for the QML/Qt layer, the file-by-file breakdown, and the historical UI schema. Predates Phase 2.0; cross-check against `docs/ARCHITECTURE.md` if anything conflicts.
+
+If you're resuming a session mid-task, also `git status` and `git log --oneline -10` to see what work survived from the previous session.
 
 ---
 
@@ -23,12 +36,29 @@ VEYA is an embedded vehicle dashboard on Raspberry Pi 5 (Qt6/QML + Python WebSoc
 PFE2026/
 ├── CLAUDE.md                              ← this file
 ├── .gitignore
+├── requirements.txt                       ← top-level (-r services/veya_core/requirements.txt)
 ├── start_veya.sh                          ← kiosk entry point
 ├── start_mock.sh                          ← quick backend-only dev shortcut
 │
+├── docs/                                  ← Phase 2.0+ docs (READ FIRST — see top of this file)
+│   ├── MEMORY.md
+│   ├── ARCHITECTURE.md
+│   └── CONTRACT.md
+│
+├── VEYA_DASHBOARD_ARCHITECTURE.md         ← Phase-1 reference doc
+│
 ├── services/
-│   └── obd_service/
-│       └── obd_service.py                 ← WebSocket telemetry server
+│   └── veya_core/                         ← Phase 2.0 core service (was obd_service/)
+│       ├── __init__.py
+│       ├── contract.py                    ← source-to-core wire schema + validators
+│       ├── tcp_server.py                  ← single-source TCP listener
+│       ├── ws_server.py                   ← UI-facing WebSocket (legacy schema)
+│       ├── core.py                        ← orchestrator + mode state machine
+│       ├── requirements.txt
+│       └── sources/                       ← standalone source scripts
+│           ├── __init__.py
+│           ├── mock_source.py             ← drive-cycle simulation (TCP client)
+│           └── elm327_source.py           ← real ELM327 USB bridge (TCP client)
 │
 └── ui/
     ├── CMakeLists.txt
@@ -69,23 +99,24 @@ cd /home/pfe/veya/ui
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release && make -j4
 
-# Run — mock mode (default)
+# Run — mock mode (default; core auto-spawns mock_source.py)
 ./start_veya.sh
 
-# Run — real ELM327
-./start_veya.sh --mode elm --elm-port /dev/ttyUSB0
+# Run — real mode (core listens on TCP :9000 for an external source)
+./start_veya.sh --mode real
+# legacy alias: ./start_veya.sh --mode elm   (silently mapped to --mode real)
 
-# Backend only (dev)
+# Then, in another terminal, point the ELM327 source at the core:
+source .venv/bin/activate && pip install obd          # one-time
+python -m services.veya_core.sources.elm327_source --device /dev/ttyUSB0
+
+# Backend only (dev) — core in mock mode, no UI
 source .venv/bin/activate
-python services/obd_service/obd_service.py --mode mock
-python services/obd_service/obd_service.py --mode elm
-
-# Install ELM327 library when ready
-source .venv/bin/activate && pip install obd
+python -m services.veya_core.core --mode mock --hz 10
 
 # Watch logs
 tail -f logs/kiosk.log
-tail -f logs/obd_service.log
+tail -f logs/obd_service.log         # core stdout/stderr (filename kept from Phase 1)
 tail -f logs/veya_ui.log
 ```
 
@@ -246,7 +277,7 @@ Do NOT try to use these from other QML files.
 
 ---
 
-## Current status (March 2026)
+## Current status (May 2026 — Phase 2.0)
 
 ### Done ✅
 - RPi5 kiosk boot: `~/.bash_profile → start_veya.sh`
@@ -255,15 +286,20 @@ Do NOT try to use these from other QML files.
 - Home: TEST/REAL mode toggle (top-right pill switch) — sends WS command to backend
 - Drive: 3-column layout (speed gauge | RPM + engine | sensors + warnings)
 - VehicleDataProvider: WebSocket singleton, auto-reconnect, 20 Hz UI throttle, sendModeCommand()
-- obd_service.py: MockProvider (drive cycle simulation) + Elm327Provider (python-obd)
-- obd_service.py: live mode switch — handles `{"cmd":"set_mode"}` commands from UI
-- start_veya.sh: `--mode mock|elm --elm-port --elm-baud --hz` passthrough
+- **Phase 2.0 architecture refactor**: legacy monolithic `obd_service.py` split into
+  `services/veya_core/{contract, tcp_server, ws_server, core}.py` plus standalone source
+  scripts in `services/veya_core/sources/`. Mock auto-spawned by core; ELM327 runs as a
+  standalone TCP-client script. UI WS schema unchanged.
+- New source-to-core wire contract (TCP, line-JSON) — see [`docs/CONTRACT.md`](docs/CONTRACT.md)
+- Live mode switch with status-only fast-path: instant TEST/REAL UI confirmation, 3 s timeout
+  with `mode_error` when no real source materialises
 
 ### Not done yet 📋
 - Verify Drive layout on actual RPi5 display resolution (may need font size tuning)
-- Diagnostic: real DTC read logic
-- SQLite session database
-- Custom CAN PCB: STM32 + MCP2515
+- Diagnostic: real DTC read logic (`query_dtc` frame is in the contract; UI not wired yet)
+- SQLite session database (Phase 2.1)
+- ESP32 firmware as a third source kind (Phase 2.3)
+- Custom CAN PCB: STM32 + MCP2515 (Phase 3.0)
 
 ---
 
