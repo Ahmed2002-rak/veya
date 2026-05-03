@@ -1,1 +1,1 @@
--r services/obd_service/requirements.txt
+-r services/veya_core/requirements.txt

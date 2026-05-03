@@ -1,0 +1,198 @@
+# VEYA — Project Memory
+
+> **Audience:** future-you, future contributors, AI assistants resuming a session
+> **Read alongside:** [`CONTRACT.md`](./CONTRACT.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`../CLAUDE.md`](../CLAUDE.md)
+> **Last updated:** May 2026 (after Phase 2.0 architecture refactor)
+
+This file is the place for things that are *not* derivable from the code: decisions, conventions, reasons, and traps. If something is mechanically obvious from `git log` or from reading a file, it does not belong here.
+
+---
+
+## 1. Project state — at a glance
+
+**Where we are:** end of Phase 2.0. The architectural refactor split the monolithic `obd_service.py` into a `core + sources` layout connected by a TCP wire contract. UI is unchanged.
+
+**What works today:**
+- Kiosk boot through `start_veya.sh` — same as Phase 1, no user-visible change.
+- `python -m services.veya_core.core --mode mock` boots a self-contained mock dashboard.
+- `python -m services.veya_core.core --mode real` listens on TCP :9000; running `elm327_source.py` (or any compliant source) feeds the UI.
+- Live mode switching from the Home toggle, with instant status confirmation and a 3 s timeout when no real source materialises.
+- All Phase 1 telemetry fields, warnings, and the dual-channel UX (TEST badge / REAL badge) preserved.
+
+**What does not work yet:**
+- Diagnostic page DTC display (the wire is there — `dtc` frame in the contract — but the Diagnostic.qml UI is still a placeholder).
+- SQLite session logging.
+- Any non-`mock`/`elm327` source — the ESP32 firmware does not exist yet.
+- `pip install obd` is required for `--mode real` to actually pull data; not installed in `.venv` by default.
+
+**Current git state:** branch `phase-2.0-architecture` off `main`. Phase 2.0 work uncommitted at the time of this doc's creation — the user reviews locally before committing/pushing.
+
+---
+
+## 2. Phase plan (the long arc)
+
+| Phase | Title | Status |
+| --- | --- | --- |
+| 1.0 | Mock + ELM327 backend, Qt6 dashboard, RPi5 kiosk | ✅ done — tagged `v1.0-stable` |
+| 2.0 | Architecture refactor: `core` + `sources` over TCP | 🛠 done in this branch, pending review |
+| 2.1 | SQLite session DB + per-trip stats | not started |
+| 2.2 | Diagnostic page real DTC display, "Read DTC" button wired through `query_dtc` | not started |
+| 2.3 | ESP32 firmware as a third source kind, BT-SPP relay | not started — Ingéniorat hardware track |
+| 3.0 | Custom STM32 + MCP2515 PCB | not started |
+| 3.x | Remote analytics / cloud uplink | possibly out of scope for the prototype |
+
+The phase numbers are how the team refers to milestones in conversation; they do not appear in code or commit messages except where explicitly tagged.
+
+---
+
+## 3. Decisions worth remembering
+
+These are all conscious choices, not arbitrary code; if you find yourself wanting to undo one, re-read the rationale first.
+
+### 3.1 The UI WS schema is FROZEN
+
+`VehicleDataProvider.qml` consumes a JSON shape with nested `warnings`, a `status` field whose values are `"mock"` or `"elm"` (not `"real"`), and flat top-level telemetry keys. **This shape is frozen** for the lifetime of the QML provider as it stands today. The Phase 2.0 refactor goes out of its way (`core._translate_telemetry`, `core._legacy_status`) to keep the wire format byte-identical to Phase 1.
+
+If you need to add a UI field, the right move is:
+1. Add it to the source-facing `contract.py` first.
+2. Translate it into the legacy schema in `core._translate_telemetry`.
+3. Add a property in `VehicleDataProvider.qml`.
+4. Bind in the consuming page.
+
+Do *not* "modernise" the UI schema in passing — it will silently break the QML provider.
+
+### 3.2 The source-facing schema is the EXTENSIBLE one
+
+When you need a new field, kind of frame, or mode, extend `contract.py`. That is the protocol Phase 2.0 was built to grow into. See `docs/CONTRACT.md` §3 for the forward-compat rules (unknown fields ignored; unknown frame types rejected).
+
+### 3.3 Single source, by design
+
+`TcpSourceServer` rejects the second concurrent connection. Multi-source aggregation (e.g. ELM327 *and* an aux ESP32 simultaneously) is intentionally out of scope. If a future use case demands it, do *not* paper over it — that is a real architectural change requiring its own design pass, not a `if not self._writer:` tweak.
+
+### 3.4 Mock subprocess, not a thread
+
+`core.py` spawns `mock_source.py` as a separate OS process via `asyncio.create_subprocess_exec`. The reason is that the mock is then *exactly the same* type of object as a future ESP32 — both are external sources speaking TCP. We trade ~30 MB of RSS and a fork() for keeping the source-or-not distinction crisp. Do not refactor the mock back into in-process code.
+
+### 3.5 Status-only broadcast for instant mode-switch UX
+
+When the user toggles TEST/REAL, the UI must see the status badge change *before* the next telemetry tick (which could be up to 1 s away in diagnostic mode). `core._broadcast_status_only()` resets the 20 Hz throttle gate and emits one frame using cached telemetry but the new `status`. This is the only place we deliberately bypass the throttle. Don't over-use it; one frame per mode switch is enough.
+
+### 3.6 `--mode elm` is a back-compat alias
+
+Internally the core knows two modes: `mock` and `real`. The UI and the legacy CLI use `mock` and `elm`. The mapping lives in two places only:
+- `start_veya.sh` translates `--mode elm` → `--mode real`.
+- `core._on_ui_command` translates `mode: "elm"` → `INTERNAL_MODE_REAL`.
+- `core._legacy_status` translates `INTERNAL_MODE_REAL` → `"elm"` on the way out.
+
+If you ever rename "real" to "live" or similar, the legacy mapping must stay in place — see §3.1.
+
+### 3.7 Why TCP / line-JSON between source and core
+
+Documented at length in [`CONTRACT.md` §2.1](./CONTRACT.md#21-why-line-delimited-json-not-websocket--mqtt--protobuf). TL;DR: ESP32 firmware is the binding constraint; JSON over a stream socket parses cleanly there with zero deps.
+
+---
+
+## 4. Conventions
+
+### 4.1 Python
+
+- Python 3.13.5 system interpreter, virtualenv at `/home/pfe/veya/.venv`.
+- `from __future__ import annotations` at the top of every new module.
+- Package-relative imports inside `services/veya_core/` (e.g. `from . import contract`).
+- Logging via the `logging` module, not `print`. Each module has its own `log = logging.getLogger(...)`.
+- Source scripts must work both as `python -m services.veya_core.sources.X` *and* as `python services/veya_core/sources/X.py` — see the `if __package__ in (None, "")` block at the top of `mock_source.py` for the pattern.
+
+### 4.2 QML
+
+- Unversioned Qt6 imports (`import QtQuick`, not `import QtQuick 2.15`). The one offender is `GaugeRing.qml` — known tech debt, do not extend it.
+- All telemetry through `VehicleDataProvider`. Never open a second WebSocket from any other QML file.
+- New components go in `ui/qml/components/` AND must be added to BOTH `qmldir` AND `CMakeLists.txt QML_FILES`.
+
+### 4.3 Bash
+
+- `start_veya.sh` is the only script that runs at boot. Do not chain other scripts in front of it.
+- Logs go to `/home/pfe/veya/logs/`. Never log to stdout — the kiosk has no visible terminal.
+
+### 4.4 Git
+
+- `main` is always demo-ready. Risky work goes on a feature branch.
+- Tags: `v1.0-stable`, `v1.1-stable`, etc. — created *after* a milestone is verified on real hardware, not before.
+- The `phase-2.0-architecture` branch will merge to `main` after the user reviews this work locally and runs the smoke tests on the actual Pi.
+
+---
+
+## 5. Shortcuts — useful one-liners
+
+```bash
+# Start core in mock mode, no UI, see frames
+python -m services.veya_core.core --mode mock --hz 5
+
+# Run the mock source against an existing core
+python -m services.veya_core.sources.mock_source --port 9000
+
+# Tail the WebSocket output as JSON
+wscat -c ws://127.0.0.1:8765            # npm install -g wscat
+
+# Hand-craft a TCP frame to the core (one line)
+echo '{"schema":1,"type":"hello","source_id":"x","source_kind":"manual"}' \
+    | nc -q1 127.0.0.1 9000
+
+# Send a UI mode-switch command directly (skip the QML toggle)
+echo '{"cmd":"set_mode","mode":"elm"}' | wscat -c ws://127.0.0.1:8765
+
+# Smoke-compile every Python file in the package
+python -m compileall -q services/veya_core
+
+# Build the Qt UI after editing CMakeLists.txt
+cd ui/build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j4
+
+# Kill any leftover backend before rerunning
+pkill -f services.veya_core.core ; pkill -f mock_source
+
+# Watch all three logs at once
+tail -f logs/kiosk.log logs/obd_service.log logs/veya_ui.log
+```
+
+---
+
+## 6. Things never to do
+
+The catalogue of "I tried this in 2026, do not try it again."
+
+1. **Do not rename a JSON field on the UI WS without updating BOTH `core.py:_translate_telemetry` AND `VehicleDataProvider.qml`.** They are coupled by name. The legacy schema is frozen — see §3.1.
+2. **Do not import `QtWebSockets` from any QML file other than `VehicleDataProvider.qml`.** The whole point of the singleton is one socket for the whole app.
+3. **Do not use Qt5 modules** — `QtGraphicalEffects`, `QtQuick.Extras`, `QtQuick.Controls.Styles`. They are gone in Qt6.
+4. **Do not copy QML from `external_ui/`** — those projects are Qt5/qmake and will not compile.
+5. **Do not work directly on `main`** for risky changes. Use a branch, tag, then merge.
+6. **Do not run two sources simultaneously** against the core. The TCP server rejects the second one — see §3.3.
+7. **Do not skip `\n` between TCP frames** when writing a custom source. The core uses `readline()`. A frame without a trailing newline will be buffered until the *next* frame's newline arrives; you will think the protocol is broken when really it is your line terminator.
+8. **Do not raise the broadcast Hz above 20** without raising both `UI_BROADCAST_HARD_HZ` in `ws_server.py` AND `uiUpdateMinMs` in `VehicleDataProvider.qml`. They must stay aligned.
+9. **Do not bypass `start_veya.sh` on the Pi**. The script handles the port-clean step that prevents "address already in use" on reboot.
+10. **Do not commit anything in `logs/`, `ui/build/`, or `.venv/`.** Already in `.gitignore`; mentioned here because new contributors sometimes try.
+11. **Do not put workaround comments like `// fix for ws bug` in code.** Phase 2.0 deliberately removed several such comments. The git log is the place for that context.
+
+---
+
+## 7. Known issues / tech debt carried into Phase 2.1
+
+These are *not* blockers for Phase 2.0 acceptance — they are carry-overs.
+
+- `GaugeRing.qml` uses the Qt5-style versioned import (`import QtQuick 2.15`). Functional; should be unversioned.
+- `Drive.qml` emits a "Qt Quick Layouts: Detected recursive rearrange" warning at startup. Renders correctly; constraint cycle should be cleaned up.
+- `Diagnostic.qml`'s TextArea has `id: console`, which shadows the global QML `console` object. Latent bug; does not currently break anything but blocks `console.log()` from those handlers.
+- `python-obd` is not in `.venv`. `--mode real` paired with `elm327_source.py` will exit code 2 with a clear error until `pip install obd` is run.
+
+---
+
+## 8. People & contact
+
+| Role | Name | Stream |
+| --- | --- | --- |
+| Hardware (CAN PCB, ELM327 wiring) | Ahmed Khodhir REZIG | Ingéniorat |
+| Software (Python, QML, RPi) | Sid Ahmed LAKEHAL | Master |
+
+Project repo: <https://github.com/Ahmed2002-rak/veya.git>
+
+---
+
+*End of MEMORY.md*
