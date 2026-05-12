@@ -21,15 +21,7 @@ Page {
     readonly property color cText:    "white"
     readonly property color cDim:     Qt.rgba(1, 1, 1, 0.55)
 
-    // ── Inline glass card ────────────────────────────────────────────────
-    component GlassCard: Rectangle {
-        radius: 16
-        color:  Qt.rgba(1, 1, 1, 0.04)
-        border.color: Qt.rgba(1, 1, 1, 0.09)
-        border.width: 1
-    }
-
-    // ── Inline mini metric (2x2 grid in right column) ────────────────────
+    // ── MiniMetric tile (right-column 2x2 grid) ──────────────────────────
     component MiniMetric: Rectangle {
         id: mm
         property string label:  "LABEL"
@@ -39,8 +31,8 @@ Page {
         property color  accent: root.cCyan
 
         radius: 12
-        color:  mm.alert ? Qt.rgba(1, 0.30, 0.43, 0.12) : Qt.rgba(1, 1, 1, 0.04)
-        border.color: mm.alert ? root.cWarn : Qt.rgba(1, 1, 1, 0.08)
+        color:  mm.alert ? Qt.rgba(1, 0.30, 0.43, 0.12) : "#0E1418"
+        border.color: mm.alert ? root.cWarn : root.cBorder
         border.width: 1
 
         Behavior on color        { ColorAnimation { duration: 300 } }
@@ -96,7 +88,7 @@ Page {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  ROOT BACKGROUND  (kept consistent with Main.qml star-field theme)
+    //  ROOT BACKGROUND
     // ══════════════════════════════════════════════════════════════════════
     Rectangle {
         anchors.fill: parent
@@ -115,7 +107,6 @@ Page {
         }
     }
 
-    // Cyan-tinted bezel frame (the "modern hybrid cluster" look)
     Rectangle {
         anchors.fill: parent
         anchors.margins: 8
@@ -133,7 +124,7 @@ Page {
         anchors.margins: 22
         spacing: 12
 
-        // ── TOP STRIP (~10%) ──────────────────────────────────────────────
+        // ── TOP STRIP (~9%) ───────────────────────────────────────────────
         RowLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: root.height * 0.09
@@ -164,26 +155,28 @@ Page {
                 }
             }
 
-            // CENTER: Status icon strip
+            // CENTER: spacer · StatusIconBar · spacer
             Item { Layout.fillWidth: true; Layout.preferredHeight: 1 }
 
             StatusIconBar {
                 Layout.alignment: Qt.AlignVCenter
-                iconSize: 22
+                iconSize: 20
                 accentColor: root.cCyan
             }
 
             Item { Layout.fillWidth: true; Layout.preferredHeight: 1 }
 
-            // RIGHT: connection/mode badge stacked with DemoBadge
+            // RIGHT: connection/mode badge + DemoBadge (capped at 30% root.width)
             ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
+                Layout.maximumWidth: root.width * 0.30
                 spacing: 4
 
                 Rectangle {
                     Layout.alignment: Qt.AlignRight
                     Layout.preferredHeight: 28
-                    Layout.preferredWidth: badgeRow.implicitWidth + 22
+                    Layout.preferredWidth: Math.min(badgeRow.implicitWidth + 16, root.width * 0.28)
+                    Layout.maximumWidth: 110
                     radius: 14
                     color: {
                         if (!VehicleDataProvider.connected)
@@ -204,7 +197,7 @@ Page {
                     Row {
                         id: badgeRow
                         anchors.centerIn: parent
-                        spacing: 7
+                        spacing: 6
 
                         Rectangle {
                             width: 7; height: 7; radius: 4
@@ -242,14 +235,15 @@ Page {
 
                 DemoBadge {
                     Layout.alignment: Qt.AlignRight
+                    Layout.maximumWidth: 130
                 }
 
-                // Mode error toast (Phase 1 lastModeError surface)
+                // Mode error toast
                 Rectangle {
                     Layout.alignment: Qt.AlignRight
                     visible: VehicleDataProvider.lastModeError.length > 0
                     Layout.preferredHeight: 18
-                    Layout.preferredWidth: errLbl.implicitWidth + 14
+                    Layout.preferredWidth: Math.min(errLbl.implicitWidth + 14, root.width * 0.28)
                     radius: 9
                     color: Qt.rgba(0.5, 0.05, 0.10, 0.85)
                     border.color: root.cWarn; border.width: 1
@@ -265,174 +259,205 @@ Page {
             }
         }
 
-        // ── MAIN AREA: 3 columns ──────────────────────────────────────────
-        RowLayout {
+        // ── MAIN AREA: unified panel ──────────────────────────────────────
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 14
 
-            // ── LEFT (35%): SPEED gauge + speed bar ───────────────────────
-            GlassCard {
-                Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.35
-
-                ColumnLayout {
-                    anchors { fill: parent; margins: 18 }
-                    spacing: 10
-
-                    Text {
-                        text: "SPEED"
-                        color: root.cDim
-                        font.pixelSize: 11
-                        font.letterSpacing: 3
-                        font.family: "DejaVu Sans"
-                        Layout.alignment: Qt.AlignHCenter
-                    }
-
-                    GaugeRing {
-                        Layout.fillWidth:  true
-                        Layout.fillHeight: true
-                        min: 0
-                        max: 200
-                        value:  VehicleDataProvider.speedKph
-                        unit:   "km/h"
-                        label:  ""
-                        accent: root.cCyan
-                    }
-
-                    SpeedBar {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 14
-                        value: clamp(VehicleDataProvider.speedKph / 200.0, 0, 1)
-                        segmentCount: 8
-                        accentColor: VehicleDataProvider.warnOverspeed
-                                     ? root.cWarn : root.cCyan
-                    }
-
-                    Text {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: "KPH"
-                        color: root.cDim
-                        font.pixelSize: 10
-                        font.letterSpacing: 2
-                        font.family: "DejaVu Sans"
-                    }
+            // Single unified backdrop
+            Rectangle {
+                anchors.fill: parent
+                radius: 16
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.rgba(0.06, 0.09, 0.12, 0.88) }
+                    GradientStop { position: 1.0; color: Qt.rgba(0.04, 0.06, 0.09, 0.92) }
                 }
+                border.color: Qt.rgba(0.10, 0.25, 0.25, 0.30)
+                border.width: 1
             }
 
-            // ── CENTER (30%): Car silhouette + gear indicator ─────────────
-            GlassCard {
-                Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.30
+            // Three-column layout with thin dividers
+            RowLayout {
+                anchors.fill: parent
+                spacing: 0
 
-                ColumnLayout {
-                    anchors { fill: parent; margins: 18 }
-                    spacing: 8
+                // ── LEFT (35%): Speed gauge + speed bar ──────────────────
+                Item {
+                    Layout.preferredWidth: root.width * 0.35
+                    Layout.fillHeight: true
 
-                    Text {
-                        text: "VEHICLE"
-                        color: root.cDim
-                        font.pixelSize: 11
-                        font.letterSpacing: 3
-                        font.family: "DejaVu Sans"
-                        Layout.alignment: Qt.AlignHCenter
-                    }
+                    ColumnLayout {
+                        anchors { fill: parent; margins: 18 }
+                        spacing: 8
 
-                    CarSilhouette {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        imageSource: Qt.resolvedUrl("assets/car_silhouette.png")
-                        fallbackColor: root.cCyan
-                    }
-
-                    GearIndicator {
-                        Layout.alignment: Qt.AlignHCenter
-                        currentGear: VehicleDataProvider.pseudoGear
-                        accentColor: root.cCyan
-                    }
-                }
-            }
-
-            // ── RIGHT (35%): RPM gauge + 2x2 mini metrics ─────────────────
-            GlassCard {
-                Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.35
-
-                ColumnLayout {
-                    anchors { fill: parent; margins: 18 }
-                    spacing: 10
-
-                    Text {
-                        text: "ENGINE"
-                        color: root.cDim
-                        font.pixelSize: 11
-                        font.letterSpacing: 3
-                        font.family: "DejaVu Sans"
-                        Layout.alignment: Qt.AlignHCenter
-                    }
-
-                    GaugeRing {
-                        Layout.fillWidth:  true
-                        Layout.fillHeight: true
-                        min: 0
-                        max: 8000
-                        value:  VehicleDataProvider.rpm
-                        unit:   "rpm"
-                        label:  "RPM"
-                        accent: root.cGreen
-                    }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        columns: 2
-                        rowSpacing: 8
-                        columnSpacing: 8
-
-                        MiniMetric {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 56
-                            label:  "COOLANT"
-                            val:    VehicleDataProvider.coolantC.toFixed(1)
-                            unit:   "°C"
-                            alert:  VehicleDataProvider.warnCoolantHigh
-                            accent: VehicleDataProvider.warnCoolantHigh ? root.cWarn : root.cCyan
-                        }
-
-                        MiniMetric {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 56
-                            label:  "BATTERY"
-                            val:    VehicleDataProvider.batteryV.toFixed(1)
-                            unit:   "V"
-                            alert:  VehicleDataProvider.warnLowBattery
-                            accent: VehicleDataProvider.warnLowBattery ? root.cWarn : "#47FF9A"
-                        }
-
-                        MiniMetric {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 56
-                            label:  "FUEL"
-                            val:    VehicleDataProvider.fuelLevel.toFixed(0)
-                            unit:   "%"
-                            alert:  VehicleDataProvider.warnLowFuel
-                            accent: VehicleDataProvider.warnLowFuel ? root.cAmber : "#47FF9A"
-                        }
-
-                        MiniMetric {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 56
-                            label:  "INTAKE"
-                            val:    VehicleDataProvider.intakeTempC.toFixed(1)
-                            unit:   "°C"
-                            alert:  false
+                        GaugeRing {
+                            Layout.fillWidth:  true
+                            Layout.fillHeight: true
+                            min: 0; max: 200
+                            value:  VehicleDataProvider.speedKph
+                            unit:   "km/h"
+                            label:  ""
                             accent: root.cCyan
+                        }
+
+                        SpeedBar {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 14
+                            value: clamp(VehicleDataProvider.speedKph / 200.0, 0, 1)
+                            segmentCount: 8
+                            accentColor: VehicleDataProvider.warnOverspeed
+                                         ? root.cWarn : root.cCyan
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: "KPH"
+                            color: root.cDim
+                            font.pixelSize: 10
+                            font.letterSpacing: 2
+                            font.family: "DejaVu Sans"
+                        }
+                    }
+                }
+
+                // Divider 1
+                Item {
+                    Layout.preferredWidth: 1
+                    Layout.fillHeight: true
+                    Rectangle {
+                        width: 1
+                        height: parent.height * 0.70
+                        anchors.centerIn: parent
+                        color: Qt.rgba(0.10, 0.25, 0.25, 0.50)
+                    }
+                }
+
+                // ── CENTER (30%): road + car silhouette + telltales + gear
+                Item {
+                    Layout.preferredWidth: root.width * 0.30
+                    Layout.fillHeight: true
+
+                    ColumnLayout {
+                        anchors { fill: parent; margins: 8 }
+                        spacing: 6
+
+                        // Road behind car (stacked z-order)
+                        Item {
+                            Layout.fillWidth:  true
+                            Layout.fillHeight: true
+
+                            AnimatedRoad {
+                                anchors.fill: parent
+                                z: 0
+                                accentColor: root.cCyan
+                            }
+
+                            CarSilhouette {
+                                anchors.centerIn: parent
+                                width:  parent.width * 0.68
+                                height: Math.min(parent.height * 0.88, parent.width * 1.30)
+                                z: 1
+                                fallbackColor: root.cCyan
+                            }
+                        }
+
+                        WarningTelltales {
+                            Layout.alignment: Qt.AlignHCenter
+                            iconSize: 28
+                            spacing:  4
+                        }
+
+                        GearIndicator {
+                            Layout.alignment: Qt.AlignHCenter
+                            currentGear: VehicleDataProvider.pseudoGear
+                            accentColor: root.cCyan
+                        }
+                    }
+                }
+
+                // Divider 2
+                Item {
+                    Layout.preferredWidth: 1
+                    Layout.fillHeight: true
+                    Rectangle {
+                        width: 1
+                        height: parent.height * 0.70
+                        anchors.centerIn: parent
+                        color: Qt.rgba(0.10, 0.25, 0.25, 0.50)
+                    }
+                }
+
+                // ── RIGHT (≈35%): RPM gauge + 2x2 mini metrics ───────────
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    ColumnLayout {
+                        anchors { fill: parent; margins: 18 }
+                        spacing: 8
+
+                        GaugeRing {
+                            Layout.fillWidth:  true
+                            Layout.fillHeight: true
+                            min: 0; max: 8000
+                            value:  VehicleDataProvider.rpm
+                            unit:   "rpm"
+                            label:  "RPM"
+                            accent: root.cGreen
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            rowSpacing:    6
+                            columnSpacing: 6
+
+                            MiniMetric {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 52
+                                label:  "COOLANT"
+                                val:    VehicleDataProvider.coolantC.toFixed(1)
+                                unit:   "°C"
+                                alert:  VehicleDataProvider.warnCoolantHigh
+                                accent: VehicleDataProvider.warnCoolantHigh ? root.cWarn : root.cCyan
+                            }
+
+                            MiniMetric {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 52
+                                label:  "BATTERY"
+                                val:    VehicleDataProvider.batteryV.toFixed(1)
+                                unit:   "V"
+                                alert:  VehicleDataProvider.warnLowBattery
+                                accent: VehicleDataProvider.warnLowBattery ? root.cWarn : "#47FF9A"
+                            }
+
+                            MiniMetric {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 52
+                                label:  "FUEL"
+                                val:    VehicleDataProvider.fuelLevel.toFixed(0)
+                                unit:   "%"
+                                alert:  VehicleDataProvider.warnLowFuel
+                                accent: VehicleDataProvider.warnLowFuel ? root.cAmber : "#47FF9A"
+                            }
+
+                            MiniMetric {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 52
+                                label:  "INTAKE"
+                                val:    VehicleDataProvider.intakeTempC.toFixed(1)
+                                unit:   "°C"
+                                alert:  false
+                                accent: root.cCyan
+                            }
                         }
                     }
                 }
             }
         }
 
-        // ── BOTTOM STRIP (~5%): warnings ──────────────────────────────────
+        // ── BOTTOM STRIP (~5%): text-based warning fallback ───────────────
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: VehicleDataProvider.anyWarning ? 32 : 0

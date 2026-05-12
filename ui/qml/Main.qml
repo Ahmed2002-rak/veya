@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Veya 1.0
 
 ApplicationWindow {
     id: win
@@ -44,6 +45,23 @@ ApplicationWindow {
                 y: Math.random() * parent.height
             }
         }
+    }
+
+    // PHASE-2.1.1-DEBUG: Force all warnings ON for 10 seconds.
+    // Remove this block in Phase 2.2 when real warning UX is finalized.
+    Shortcut {
+        sequence: "Ctrl+Shift+W"
+        context: Qt.ApplicationShortcut
+        onActivated: {
+            VehicleDataProvider.debugForceWarnings = true
+            debugWarningTimer.restart()
+        }
+    }
+    Timer {
+        id: debugWarningTimer
+        interval: 10000
+        repeat: false
+        onTriggered: VehicleDataProvider.debugForceWarnings = false
     }
 
     StackView {

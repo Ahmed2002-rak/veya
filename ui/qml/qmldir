@@ -7,3 +7,5 @@ CarSilhouette   1.0 components/CarSilhouette.qml
 GearIndicator   1.0 components/GearIndicator.qml
 DemoBadge       1.0 components/DemoBadge.qml
 SpeedBar        1.0 components/SpeedBar.qml
+AnimatedRoad    1.0 components/AnimatedRoad.qml
+WarningTelltales 1.0 components/WarningTelltales.qml

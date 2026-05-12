@@ -5,30 +5,28 @@ import QtQuick.Effects
 Item {
     id: root
 
-    property string imageSource: ""
+    property string imageSource: "../assets/car_silhouette.png"
     property color  fallbackColor: "#4DD2FF"
 
     implicitWidth:  260
     implicitHeight: 360
 
-    // Real image path (preferred)
     Image {
         id: img
         anchors.fill: parent
         anchors.margins: 8
-        source: root.imageSource
+        source: Qt.resolvedUrl(root.imageSource)
         fillMode: Image.PreserveAspectFit
         smooth: true
         sourceSize: Qt.size(width * 2, height * 2)
-        visible: status === Image.Ready
+        visible: img.status === Image.Ready
         opacity: 0.95
     }
 
-    // Soft drop shadow for the photo
     MultiEffect {
         anchors.fill: img
         source: img
-        visible: img.visible
+        visible: img.status === Image.Ready
         shadowEnabled: true
         shadowColor: "#000000"
         shadowBlur: 0.6
@@ -37,67 +35,122 @@ Item {
         shadowOpacity: 0.45
     }
 
-    // Inline SVG-style fallback (top-down silhouette) — rendered only when
-    // the image source is empty or fails to load. Uses Qt Quick Shapes so
-    // there is no missing-asset failure mode.
+    // Fallback — rendered only when PNG fails to load or imageSource is empty.
     Shape {
-        id: fallback
+        id: svgShape
         anchors.fill: parent
         anchors.margins: 16
-        visible: !img.visible
+        visible: img.status !== Image.Ready
         antialiasing: true
         layer.enabled: true
         layer.smooth: true
 
+        // Main body — dark fill, accent outline at 60% opacity
         ShapePath {
-            strokeColor: root.fallbackColor
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.6)
             strokeWidth: 2
-            fillColor:   Qt.rgba(root.fallbackColor.r,
-                                 root.fallbackColor.g,
-                                 root.fallbackColor.b,
-                                 0.18)
+            fillColor:   "#2A3540"
             joinStyle:   ShapePath.RoundJoin
             capStyle:    ShapePath.RoundCap
 
-            // Stylized top-down car body, normalized 0..1 then scaled.
-            startX: fallback.width * 0.50
-            startY: fallback.height * 0.04
-
+            startX: svgShape.width * 0.50; startY: svgShape.height * 0.04
             PathQuad {
-                x: fallback.width * 0.86; y: fallback.height * 0.18
-                controlX: fallback.width * 0.78; controlY: fallback.height * 0.04
+                x: svgShape.width * 0.86; y: svgShape.height * 0.18
+                controlX: svgShape.width * 0.78; controlY: svgShape.height * 0.04
             }
-            PathLine { x: fallback.width * 0.92; y: fallback.height * 0.42 }
-            PathLine { x: fallback.width * 0.92; y: fallback.height * 0.78 }
+            PathLine { x: svgShape.width * 0.92; y: svgShape.height * 0.42 }
+            PathLine { x: svgShape.width * 0.92; y: svgShape.height * 0.78 }
             PathQuad {
-                x: fallback.width * 0.50; y: fallback.height * 0.96
-                controlX: fallback.width * 0.92; controlY: fallback.height * 0.96
+                x: svgShape.width * 0.50; y: svgShape.height * 0.96
+                controlX: svgShape.width * 0.92; controlY: svgShape.height * 0.96
             }
             PathQuad {
-                x: fallback.width * 0.08; y: fallback.height * 0.78
-                controlX: fallback.width * 0.08; controlY: fallback.height * 0.96
+                x: svgShape.width * 0.08; y: svgShape.height * 0.78
+                controlX: svgShape.width * 0.08; controlY: svgShape.height * 0.96
             }
-            PathLine { x: fallback.width * 0.08; y: fallback.height * 0.42 }
-            PathLine { x: fallback.width * 0.14; y: fallback.height * 0.18 }
+            PathLine { x: svgShape.width * 0.08; y: svgShape.height * 0.42 }
+            PathLine { x: svgShape.width * 0.14; y: svgShape.height * 0.18 }
             PathQuad {
-                x: fallback.width * 0.50; y: fallback.height * 0.04
-                controlX: fallback.width * 0.22; controlY: fallback.height * 0.04
+                x: svgShape.width * 0.50; y: svgShape.height * 0.04
+                controlX: svgShape.width * 0.22; controlY: svgShape.height * 0.04
             }
         }
 
-        // Inner windshield/roof line for visual depth
+        // Front windshield (hood end) — subtle translucent tint
         ShapePath {
-            strokeColor: Qt.rgba(root.fallbackColor.r,
-                                 root.fallbackColor.g,
-                                 root.fallbackColor.b,
-                                 0.5)
-            strokeWidth: 1.5
-            fillColor: "transparent"
-            startX: fallback.width * 0.22; startY: fallback.height * 0.30
-            PathLine { x: fallback.width * 0.78; y: fallback.height * 0.30 }
-            PathLine { x: fallback.width * 0.74; y: fallback.height * 0.55 }
-            PathLine { x: fallback.width * 0.26; y: fallback.height * 0.55 }
-            PathLine { x: fallback.width * 0.22; y: fallback.height * 0.30 }
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.30)
+            strokeWidth: 1
+            fillColor:   Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.12)
+            startX: svgShape.width * 0.26; startY: svgShape.height * 0.22
+            PathLine { x: svgShape.width * 0.74; y: svgShape.height * 0.22 }
+            PathLine { x: svgShape.width * 0.70; y: svgShape.height * 0.38 }
+            PathLine { x: svgShape.width * 0.30; y: svgShape.height * 0.38 }
+            PathLine { x: svgShape.width * 0.26; y: svgShape.height * 0.22 }
+        }
+
+        // Rear window — same treatment, slightly narrower
+        ShapePath {
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.30)
+            strokeWidth: 1
+            fillColor:   Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.10)
+            startX: svgShape.width * 0.28; startY: svgShape.height * 0.62
+            PathLine { x: svgShape.width * 0.72; y: svgShape.height * 0.62 }
+            PathLine { x: svgShape.width * 0.76; y: svgShape.height * 0.78 }
+            PathLine { x: svgShape.width * 0.24; y: svgShape.height * 0.78 }
+            PathLine { x: svgShape.width * 0.28; y: svgShape.height * 0.62 }
+        }
+
+        // Front-left wheel
+        ShapePath {
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.40)
+            strokeWidth: 1.5; fillColor: "#1A2530"
+            startX: svgShape.width * 0.03; startY: svgShape.height * 0.12
+            PathLine { x: svgShape.width * 0.17; y: svgShape.height * 0.12 }
+            PathLine { x: svgShape.width * 0.17; y: svgShape.height * 0.28 }
+            PathLine { x: svgShape.width * 0.03; y: svgShape.height * 0.28 }
+            PathLine { x: svgShape.width * 0.03; y: svgShape.height * 0.12 }
+        }
+
+        // Front-right wheel
+        ShapePath {
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.40)
+            strokeWidth: 1.5; fillColor: "#1A2530"
+            startX: svgShape.width * 0.83; startY: svgShape.height * 0.12
+            PathLine { x: svgShape.width * 0.97; y: svgShape.height * 0.12 }
+            PathLine { x: svgShape.width * 0.97; y: svgShape.height * 0.28 }
+            PathLine { x: svgShape.width * 0.83; y: svgShape.height * 0.28 }
+            PathLine { x: svgShape.width * 0.83; y: svgShape.height * 0.12 }
+        }
+
+        // Rear-left wheel
+        ShapePath {
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.40)
+            strokeWidth: 1.5; fillColor: "#1A2530"
+            startX: svgShape.width * 0.03; startY: svgShape.height * 0.72
+            PathLine { x: svgShape.width * 0.17; y: svgShape.height * 0.72 }
+            PathLine { x: svgShape.width * 0.17; y: svgShape.height * 0.88 }
+            PathLine { x: svgShape.width * 0.03; y: svgShape.height * 0.88 }
+            PathLine { x: svgShape.width * 0.03; y: svgShape.height * 0.72 }
+        }
+
+        // Rear-right wheel
+        ShapePath {
+            strokeColor: Qt.rgba(root.fallbackColor.r, root.fallbackColor.g,
+                                 root.fallbackColor.b, 0.40)
+            strokeWidth: 1.5; fillColor: "#1A2530"
+            startX: svgShape.width * 0.83; startY: svgShape.height * 0.72
+            PathLine { x: svgShape.width * 0.97; y: svgShape.height * 0.72 }
+            PathLine { x: svgShape.width * 0.97; y: svgShape.height * 0.88 }
+            PathLine { x: svgShape.width * 0.83; y: svgShape.height * 0.88 }
+            PathLine { x: svgShape.width * 0.83; y: svgShape.height * 0.72 }
         }
     }
 }

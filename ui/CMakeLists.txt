@@ -27,6 +27,8 @@ qt_add_qml_module(veya_ui
         qml/components/GearIndicator.qml
         qml/components/DemoBadge.qml
         qml/components/SpeedBar.qml
+        qml/components/AnimatedRoad.qml
+        qml/components/WarningTelltales.qml
 
     RESOURCES
         qml/qmldir
