@@ -1,87 +1,36 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Effects
 import Veya 1.0
 
 Page {
     id: root
+    width: parent.width
+    height: parent.height
     clip: true
 
     property var nav: null
-    background: Rectangle { color: "transparent" }
 
-    function clamp(x, a, b) { return Math.max(a, Math.min(b, x)) }
-    function ts() {
-        const d = new Date()
-        return ("0" + d.getHours()).slice(-2)   + ":" +
-               ("0" + d.getMinutes()).slice(-2) + ":" +
-               ("0" + d.getSeconds()).slice(-2)
-    }
-    function appendLine(line) {
-        outputArea.text += "[" + ts() + "] " + line + "\n"
-        outputArea.cursorPosition = outputArea.length
-    }
+    background: Rectangle { color: "transparent" }
 
     // ── Palette (matches Drive.qml) ──────────────────────────────────────
     readonly property color cBg:     "#0B0F14"
     readonly property color cBorder: "#1A4040"
     readonly property color cCyan:   "#4DD2FF"
-    readonly property color cGreen:  "#7CFF4A"
-    readonly property color cWarn:   "#FF4D6D"
-    readonly property color cAmber:  "#FFD84D"
+    readonly property color cGreen:  "#47FF9A"
     readonly property color cText:   "white"
-    readonly property color cDim:    Qt.rgba(1, 1, 1, 0.55)
+    readonly property color cWarn:   "#FF4D6D"
 
-    component GlassCard: Rectangle {
-        radius: 16
-        color:  Qt.rgba(1, 1, 1, 0.04)
-        border.color: Qt.rgba(1, 1, 1, 0.09)
-        border.width: 1
-    }
+    // ── Developer unlock state ───────────────────────────────────────────
+    property int  tapCount:    0
+    property bool devUnlocked: false
 
-    component MetricTile: Rectangle {
-        property string label: "LABEL"
-        property string val:   "0"
-        property string unit:  ""
-        property color  accent: root.cCyan
-
-        radius: 12
-        color:  Qt.rgba(1, 1, 1, 0.04)
-        border.color: Qt.rgba(1, 1, 1, 0.09)
-        border.width: 1
-
-        Column {
-            anchors {
-                left: parent.left; leftMargin: 12
-                verticalCenter: parent.verticalCenter
-            }
-            spacing: 4
-            Text {
-                text: parent.parent.label
-                color: root.cDim
-                font.pixelSize: 9
-                font.letterSpacing: 1.6
-                font.family: "DejaVu Sans"
-            }
-            Row {
-                spacing: 4
-                Text {
-                    id: vlbl
-                    text: parent.parent.parent.val
-                    color: parent.parent.parent.accent
-                    font.pixelSize: 18
-                    font.bold: true
-                    font.family: "DejaVu Sans"
-                }
-                Text {
-                    anchors.baseline: vlbl.baseline
-                    text: parent.parent.parent.unit
-                    color: root.cDim
-                    font.pixelSize: 11
-                    font.family: "DejaVu Sans"
-                }
-            }
-        }
+    Timer {
+        id: tapResetTimer
+        interval: 3000
+        repeat: false
+        onTriggered: root.tapCount = 0
     }
 
     // ── Background ───────────────────────────────────────────────────────
@@ -102,6 +51,7 @@ Page {
         }
     }
 
+    // ── Outer bezel (matches Drive.qml) ─────────────────────────────────
     Rectangle {
         anchors.fill: parent
         anchors.margins: 8
@@ -110,16 +60,13 @@ Page {
         radius: 24
     }
 
-    // ── DTC model (populated in mock mode by "Read DTC") ─────────────────
-    ListModel { id: dtcModel }
-
-    // ══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════
     //  MAIN LAYOUT
-    // ══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 22
-        spacing: 12
+        spacing: 0
 
         // ── TOP STRIP ─────────────────────────────────────────────────────
         RowLayout {
@@ -150,7 +97,8 @@ Page {
                 }
             }
 
-            // Title
+            Item { Layout.fillWidth: true }
+
             Text {
                 Layout.alignment: Qt.AlignVCenter
                 text: "DIAGNOSTIC"
@@ -166,7 +114,8 @@ Page {
             // Connection badge + DemoBadge stacked
             ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
-                Layout.maximumWidth: root.width * 0.30
+                Layout.preferredWidth: root.width * 0.28
+                Layout.maximumWidth:   root.width * 0.30
                 spacing: 4
 
                 Rectangle {
@@ -210,6 +159,7 @@ Page {
                                 NumberAnimation { to: 1.0; duration: 600 }
                             }
                         }
+
                         Text {
                             text: {
                                 if (!VehicleDataProvider.connected) return "OFFLINE"
@@ -219,10 +169,8 @@ Page {
                                      :                "—"
                             }
                             color: root.cText
-                            font.pixelSize: 11
-                            font.bold: true
-                            font.letterSpacing: 1.4
-                            font.family: "DejaVu Sans"
+                            font.pixelSize: 11; font.bold: true
+                            font.letterSpacing: 1.4; font.family: "DejaVu Sans"
                         }
                     }
                 }
@@ -234,320 +182,238 @@ Page {
             }
         }
 
-        // ── MAIN AREA: 2 panels ───────────────────────────────────────────
-        RowLayout {
+        // ── Subtitle ─────────────────────────────────────────────────────
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 12
+            Layout.bottomMargin: 20
+            text: "What would you like to do?"
+            color: Qt.rgba(1, 1, 1, 0.6)
+            font.pixelSize: 16
+            font.family: "DejaVu Sans"
+        }
+
+        // ── Two action cards ──────────────────────────────────────────────
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.maximumWidth: root.width
-            width: root.width
-            spacing: 14
 
-            // ── LEFT PANEL (40%): DTC CODES ───────────────────────────────
-            GlassCard {
-                Layout.fillHeight: true
-                Layout.preferredWidth: (root.width - 58) * 0.40
-                Layout.maximumWidth:   (root.width - 58) * 0.40
-                Layout.minimumWidth:   (root.width - 58) * 0.40
-                Layout.fillWidth: false
+            Row {
+                anchors.centerIn: parent
+                spacing: 32
 
-                ColumnLayout {
-                    anchors { fill: parent; margins: 18 }
-                    spacing: 12
-
-                    Text {
-                        text: "DTC CODES"
-                        color: root.cDim
-                        font.pixelSize: 12
-                        font.letterSpacing: 3
-                        font.family: "DejaVu Sans"
+                // ── GET REPORT card ───────────────────────────────────────
+                Rectangle {
+                    id: reportCard
+                    width: root.width * 0.35
+                    height: 220
+                    radius: 16
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: "#111D23" }
+                        GradientStop { position: 0.5; color: "#0E1418" }
+                        GradientStop { position: 1.0; color: "#0E1418" }
                     }
+                    border.color: reportHover.containsMouse
+                                  ? root.cCyan
+                                  : Qt.rgba(0.302, 0.824, 1.0, 0.40)
+                    border.width: 1
+                    Behavior on border.color { ColorAnimation { duration: 200 } }
 
-                    // List + empty placeholder
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                    scale: reportHover.pressed ? 0.98 : (reportHover.containsMouse ? 1.02 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-                        ListView {
-                            id: dtcList
-                            anchors.fill: parent
-                            model: dtcModel
-                            spacing: 8
-                            clip: true
-                            visible: dtcModel.count > 0
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        width: parent.width - 48
+                        spacing: 14
 
-                            delegate: Rectangle {
-                                width: ListView.view.width
-                                height: 56
-                                radius: 10
-                                color:  Qt.rgba(1, 1, 1, 0.04)
-                                border.color: Qt.rgba(1, 0.30, 0.43, 0.40)
-                                border.width: 1
+                        Item {
+                            Layout.alignment: Qt.AlignHCenter
+                            width: 56; height: 56
 
-                                required property string code
-                                required property string desc
-
-                                Column {
-                                    anchors {
-                                        left: parent.left; leftMargin: 14
-                                        verticalCenter: parent.verticalCenter
-                                    }
-                                    spacing: 4
-                                    Text {
-                                        text:  parent.parent.code
-                                        color: root.cWarn
-                                        font.family:    "DejaVu Sans Mono"
-                                        font.pixelSize: 18
-                                        font.bold:      true
-                                    }
-                                    Text {
-                                        text:  parent.parent.desc
-                                        color: root.cDim
-                                        font.family:    "DejaVu Sans"
-                                        font.pixelSize: 11
-                                    }
-                                }
+                            Image {
+                                id: reportIcon
+                                anchors.fill: parent
+                                source: "qrc:/qt/qml/Veya/qml/assets/icon_settings.svg"
+                                fillMode: Image.PreserveAspectFit
+                                sourceSize: Qt.size(112, 112)
+                                smooth: true
+                                visible: false
+                            }
+                            MultiEffect {
+                                source: reportIcon
+                                anchors.fill: reportIcon
+                                colorization: 1.0
+                                colorizationColor: root.cCyan
                             }
                         }
 
                         Text {
-                            anchors.centerIn: parent
-                            visible: dtcModel.count === 0
-                            text: "No fault codes"
-                            color: root.cDim
-                            font.pixelSize: 14
+                            Layout.alignment: Qt.AlignHCenter
+                            text: "Get Report"
+                            color: root.cText
+                            font.pixelSize: 24; font.bold: true
                             font.family: "DejaVu Sans"
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.maximumWidth: parent.width
+                            text: "Diagnose your car and receive a guided report"
+                            color: Qt.rgba(1, 1, 1, 0.6)
+                            font.pixelSize: 14; font.family: "DejaVu Sans"
+                            wrapMode: Text.WordWrap
+                            horizontalAlignment: Text.AlignHCenter
                         }
                     }
 
-                    // Read / Clear buttons
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
+                    Text {
+                        anchors.bottom: parent.bottom
+                        anchors.right:  parent.right
+                        anchors.bottomMargin: 16
+                        anchors.rightMargin:  16
+                        text: "→"
+                        color: root.cCyan
+                        opacity: 0.6
+                        font.pixelSize: 24
+                        font.family: "DejaVu Sans"
+                    }
 
-                        Button {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 38
-                            text: "Read DTC"
-                            font.family: "DejaVu Sans"
-                            font.bold: true
-                            background: Rectangle {
-                                radius: 8
-                                color: parent.hovered ? Qt.rgba(0.30, 0.82, 1, 0.18)
-                                                      : Qt.rgba(0.30, 0.82, 1, 0.10)
-                                border.color: root.cCyan; border.width: 1
-                                Behavior on color { ColorAnimation { duration: 150 } }
+                    MouseArea {
+                        id: reportHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (root.nav)
+                                root.nav.push(Qt.resolvedUrl("ReportScreen.qml"), { nav: root.nav })
+                        }
+                    }
+                }
+
+                // ── START LIVE SESSION card ───────────────────────────────
+                Rectangle {
+                    id: liveCard
+                    width: root.width * 0.35
+                    height: 220
+                    radius: 16
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: "#111F1E" }
+                        GradientStop { position: 0.5; color: "#0E1418" }
+                        GradientStop { position: 1.0; color: "#0E1418" }
+                    }
+                    border.color: liveHover.containsMouse
+                                  ? root.cGreen
+                                  : Qt.rgba(0.278, 1.0, 0.604, 0.40)
+                    border.width: 1
+                    Behavior on border.color { ColorAnimation { duration: 200 } }
+
+                    scale: liveHover.pressed ? 0.98 : (liveHover.containsMouse ? 1.02 : 1.0)
+                    Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        width: parent.width - 48
+                        spacing: 14
+
+                        Item {
+                            Layout.alignment: Qt.AlignHCenter
+                            width: 56; height: 56
+
+                            Image {
+                                id: liveIcon
+                                anchors.fill: parent
+                                source: "qrc:/qt/qml/Veya/qml/assets/icon_phone.svg"
+                                fillMode: Image.PreserveAspectFit
+                                sourceSize: Qt.size(112, 112)
+                                smooth: true
+                                visible: false
                             }
-                            contentItem: Text {
-                                text: parent.text
-                                color: root.cCyan
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                font: parent.font
-                            }
-                            onClicked: {
-                                if (VehicleDataProvider.dataMode === "mock") {
-                                    dtcModel.clear()
-                                    dtcModel.append({
-                                        code: "P0300",
-                                        desc: "Random/Multiple Cylinder Misfire"
-                                    })
-                                    dtcModel.append({
-                                        code: "P0420",
-                                        desc: "Catalyst System Efficiency Below Threshold"
-                                    })
-                                    dtcModel.append({
-                                        code: "P0171",
-                                        desc: "System Too Lean (Bank 1)"
-                                    })
-                                    appendLine("[mock] 3 codes read")
-                                } else {
-                                    appendLine("Feature available after backend update — REAL DTC reading reserved for Phase 3.")
-                                }
+                            MultiEffect {
+                                source: liveIcon
+                                anchors.fill: liveIcon
+                                colorization: 1.0
+                                colorizationColor: root.cGreen
                             }
                         }
 
-                        Button {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 38
-                            text: "Clear DTC"
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: "Start Live Session"
+                            color: root.cText
+                            font.pixelSize: 24; font.bold: true
                             font.family: "DejaVu Sans"
-                            font.bold: true
-                            background: Rectangle {
-                                radius: 8
-                                color: parent.hovered ? Qt.rgba(1, 0.30, 0.43, 0.18)
-                                                      : Qt.rgba(1, 0.30, 0.43, 0.10)
-                                border.color: root.cWarn; border.width: 1
-                                Behavior on color { ColorAnimation { duration: 150 } }
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                color: root.cWarn
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                font: parent.font
-                            }
-                            onClicked: {
-                                dtcModel.clear()
-                                appendLine("DTC list cleared")
-                            }
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.maximumWidth: parent.width
+                            text: "Connect live with a remote expert for diagnosis"
+                            color: Qt.rgba(1, 1, 1, 0.6)
+                            font.pixelSize: 14; font.family: "DejaVu Sans"
+                            wrapMode: Text.WordWrap
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
+
+                    Text {
+                        anchors.bottom: parent.bottom
+                        anchors.right:  parent.right
+                        anchors.bottomMargin: 16
+                        anchors.rightMargin:  16
+                        text: "→"
+                        color: root.cGreen
+                        opacity: 0.6
+                        font.pixelSize: 24
+                        font.family: "DejaVu Sans"
+                    }
+
+                    MouseArea {
+                        id: liveHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (root.nav)
+                                root.nav.push(Qt.resolvedUrl("LiveSessionScreen.qml"), { nav: root.nav })
                         }
                     }
                 }
             }
+        }
+    }
 
-            // ── RIGHT PANEL (60%): LIVE DATA ──────────────────────────────
-            GlassCard {
-                Layout.fillHeight: true
-                Layout.preferredWidth: (root.width - 58) * 0.60
-                Layout.maximumWidth:   (root.width - 58) * 0.60
-                Layout.minimumWidth:   (root.width - 58) * 0.60
-                Layout.fillWidth: false
+    // ── Hidden 5-tap developer unlock ────────────────────────────────────
+    // Subtle dot bottom-right. 5 taps within 3s → DevDiagnostic.
+    // Once unlocked this session, single tap opens DevDiagnostic.
+    Item {
+        anchors { bottom: parent.bottom; right: parent.right }
+        anchors.bottomMargin: 12
+        anchors.rightMargin:  12
+        width: 30; height: 30
 
-                ColumnLayout {
-                    anchors { fill: parent; margins: 18 }
-                    spacing: 12
+        Rectangle {
+            anchors.centerIn: parent
+            width: 6; height: 6; radius: 3
+            color: "white"; opacity: 0.15
+        }
 
-                    Text {
-                        text: "LIVE DATA"
-                        color: root.cDim
-                        font.pixelSize: 12
-                        font.letterSpacing: 3
-                        font.family: "DejaVu Sans"
-                    }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        Layout.maximumWidth: parent.width
-                        columns: 2
-                        rowSpacing: 8
-                        columnSpacing: 8
-
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "RPM"
-                            val:   Math.round(VehicleDataProvider.rpm).toString()
-                            unit:  ""
-                            accent: root.cGreen
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "SPEED"
-                            val:   VehicleDataProvider.speedKph.toFixed(1)
-                            unit:  "km/h"
-                            accent: root.cCyan
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "COOLANT"
-                            val:   VehicleDataProvider.coolantC.toFixed(1)
-                            unit:  "°C"
-                            accent: VehicleDataProvider.warnCoolantHigh ? root.cWarn : root.cCyan
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "BATTERY"
-                            val:   VehicleDataProvider.batteryV.toFixed(1)
-                            unit:  "V"
-                            accent: VehicleDataProvider.warnLowBattery ? root.cWarn : "#47FF9A"
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "FUEL"
-                            val:   VehicleDataProvider.fuelLevel.toFixed(0)
-                            unit:  "%"
-                            accent: VehicleDataProvider.warnLowFuel ? root.cAmber : "#47FF9A"
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "THROTTLE"
-                            val:   VehicleDataProvider.throttlePct.toFixed(0)
-                            unit:  "%"
-                            accent: root.cCyan
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "ENGINE LOAD"
-                            val:   VehicleDataProvider.engineLoad.toFixed(0)
-                            unit:  "%"
-                            accent: VehicleDataProvider.engineLoad > 80 ? root.cWarn
-                                  : VehicleDataProvider.engineLoad > 60 ? root.cAmber
-                                  :                                       root.cGreen
-                        }
-                        MetricTile {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
-                            Layout.preferredHeight: 56
-                            label: "INTAKE"
-                            val:   VehicleDataProvider.intakeTempC.toFixed(1)
-                            unit:  "°C"
-                            accent: root.cCyan
-                        }
-                    }
-
-                    // Console output area (was id: console — now id: outputArea)
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        radius: 10
-                        color: Qt.rgba(0, 0, 0, 0.40)
-                        border.color: Qt.rgba(1, 1, 1, 0.10)
-                        border.width: 1
-
-                        ScrollView {
-                            anchors.fill: parent
-                            anchors.margins: 1
-                            clip: true
-
-                            TextArea {
-                                id: outputArea
-                                readOnly: true
-                                wrapMode: TextEdit.Wrap
-                                color: root.cText
-                                font.family: "DejaVu Sans Mono"
-                                font.pixelSize: 12
-                                background: null
-                                text: "Diagnostic console ready.\n"
-                            }
-                        }
-                    }
-
-                    // "Send to server" — disabled (Phase 3)
-                    Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 38
-                        text: "Send to server"
-                        font.family: "DejaVu Sans"
-                        font.bold: true
-                        enabled: false
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Server not configured (Phase 3)"
-                        background: Rectangle {
-                            radius: 8
-                            color: Qt.rgba(1, 1, 1, 0.04)
-                            border.color: Qt.rgba(1, 1, 1, 0.10); border.width: 1
-                        }
-                        contentItem: Text {
-                            text: parent.text
-                            color: root.cDim
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font: parent.font
-                        }
-                    }
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                if (root.devUnlocked) {
+                    if (root.nav)
+                        root.nav.push(Qt.resolvedUrl("DevDiagnostic.qml"), { nav: root.nav })
+                    return
+                }
+                root.tapCount++
+                tapResetTimer.restart()
+                if (root.tapCount >= 5) {
+                    root.devUnlocked = true
+                    root.tapCount = 0
+                    tapResetTimer.stop()
+                    if (root.nav)
+                        root.nav.push(Qt.resolvedUrl("DevDiagnostic.qml"), { nav: root.nav })
                 }
             }
         }
