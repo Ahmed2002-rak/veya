@@ -5,6 +5,7 @@ import Veya 1.0
 
 Page {
     id: root
+    clip: true
 
     property var nav: null
     background: Rectangle { color: "transparent" }
@@ -165,12 +166,13 @@ Page {
             // Connection badge + DemoBadge stacked
             ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
+                Layout.maximumWidth: root.width * 0.30
                 spacing: 4
 
                 Rectangle {
                     Layout.alignment: Qt.AlignRight
                     Layout.preferredHeight: 28
-                    Layout.preferredWidth: badgeRow.implicitWidth + 22
+                    Layout.preferredWidth: Math.min(badgeRow.implicitWidth + 22, root.width * 0.28)
                     radius: 14
                     color: {
                         if (!VehicleDataProvider.connected)
@@ -227,6 +229,7 @@ Page {
 
                 DemoBadge {
                     Layout.alignment: Qt.AlignRight
+                    Layout.maximumWidth: root.width * 0.28
                 }
             }
         }
@@ -235,12 +238,17 @@ Page {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.maximumWidth: root.width
+            width: root.width
             spacing: 14
 
             // ── LEFT PANEL (40%): DTC CODES ───────────────────────────────
             GlassCard {
                 Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.40
+                Layout.preferredWidth: (root.width - 58) * 0.40
+                Layout.maximumWidth:   (root.width - 58) * 0.40
+                Layout.minimumWidth:   (root.width - 58) * 0.40
+                Layout.fillWidth: false
 
                 ColumnLayout {
                     anchors { fill: parent; margins: 18 }
@@ -390,7 +398,10 @@ Page {
             // ── RIGHT PANEL (60%): LIVE DATA ──────────────────────────────
             GlassCard {
                 Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.60
+                Layout.preferredWidth: (root.width - 58) * 0.60
+                Layout.maximumWidth:   (root.width - 58) * 0.60
+                Layout.minimumWidth:   (root.width - 58) * 0.60
+                Layout.fillWidth: false
 
                 ColumnLayout {
                     anchors { fill: parent; margins: 18 }
@@ -406,13 +417,15 @@ Page {
 
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: 4
+                        Layout.maximumWidth: parent.width
+                        columns: 2
                         rowSpacing: 8
                         columnSpacing: 8
 
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "RPM"
                             val:   Math.round(VehicleDataProvider.rpm).toString()
                             unit:  ""
@@ -420,7 +433,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "SPEED"
                             val:   VehicleDataProvider.speedKph.toFixed(1)
                             unit:  "km/h"
@@ -428,7 +442,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "COOLANT"
                             val:   VehicleDataProvider.coolantC.toFixed(1)
                             unit:  "°C"
@@ -436,7 +451,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "BATTERY"
                             val:   VehicleDataProvider.batteryV.toFixed(1)
                             unit:  "V"
@@ -444,7 +460,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "FUEL"
                             val:   VehicleDataProvider.fuelLevel.toFixed(0)
                             unit:  "%"
@@ -452,7 +469,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "THROTTLE"
                             val:   VehicleDataProvider.throttlePct.toFixed(0)
                             unit:  "%"
@@ -460,7 +478,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "ENGINE LOAD"
                             val:   VehicleDataProvider.engineLoad.toFixed(0)
                             unit:  "%"
@@ -470,7 +489,8 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
+                            Layout.preferredHeight: 56
                             label: "INTAKE"
                             val:   VehicleDataProvider.intakeTempC.toFixed(1)
                             unit:  "°C"

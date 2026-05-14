@@ -64,6 +64,18 @@ ApplicationWindow {
         onTriggered: VehicleDataProvider.debugForceWarnings = false
     }
 
+// PHASE-2.1-TELLTALES-TEST: auto-trigger warnings on app launch.
+// REMOVE this block once telltale rendering is verified.
+Timer {
+    interval: 5000
+    running: true
+    repeat: false
+    onTriggered: {
+        console.log("[telltales-test] auto-trigger firing")
+        VehicleDataProvider.debugForceWarnings = true
+        debugWarningTimer.restart()
+    }
+}
     StackView {
         id: stack
         anchors.fill: parent

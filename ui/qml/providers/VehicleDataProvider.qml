@@ -38,14 +38,25 @@ Item {
     property real intakeTempC:  25.0
 
     // ── Warning flags ───────────────────────────────────────────────────────
-    property bool warnCoolantHigh: false
-    property bool warnOverspeed:   false
-    property bool warnLowFuel:     false
-    property bool warnLowBattery:  false
+    // PHASE-2.1.1-DEBUG: when true, all 4 warning flags are forced ON.
+    // Used by Ctrl+Shift+W shortcut in Main.qml. Remove in Phase 2.2.
+    property bool debugForceWarnings: false
+
+    // Internal backing — written by WS message handler
+    property bool _wsCoolantHigh: false
+    property bool _wsOverspeed:   false
+    property bool _wsLowFuel:     false
+    property bool _wsLowBattery:  false
+
+    // Public — OR'd with debug override (API unchanged for all consumers)
+    readonly property bool warnCoolantHigh: _wsCoolantHigh || debugForceWarnings
+    readonly property bool warnOverspeed:   _wsOverspeed   || debugForceWarnings
+    readonly property bool warnLowFuel:     _wsLowFuel     || debugForceWarnings
+    readonly property bool warnLowBattery:  _wsLowBattery  || debugForceWarnings
 
     // Convenience: any active warning at all
-    property bool anyWarning: warnCoolantHigh || warnOverspeed
-                              || warnLowFuel  || warnLowBattery
+    readonly property bool anyWarning: warnCoolantHigh || warnOverspeed
+                                       || warnLowFuel  || warnLowBattery
 
     // ── Pseudo-gear (UI-only simulation) ───────────────────────────────────
     // OBD-II does not expose the gear selector. In TEST/mock mode we derive
@@ -202,10 +213,10 @@ Item {
 
             // ── Warning flags ──────────────────────────────────────────────
             if (obj.warnings) {
-                root.warnCoolantHigh = !!obj.warnings.coolant_high
-                root.warnOverspeed   = !!obj.warnings.overspeed
-                root.warnLowFuel     = !!obj.warnings.low_fuel
-                root.warnLowBattery  = !!obj.warnings.low_battery
+                root._wsCoolantHigh = !!obj.warnings.coolant_high
+                root._wsOverspeed   = !!obj.warnings.overspeed
+                root._wsLowFuel     = !!obj.warnings.low_fuel
+                root._wsLowBattery  = !!obj.warnings.low_battery
             }
 
             // ── Mode switch error from backend ─────────────────────────────

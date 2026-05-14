@@ -90,34 +90,34 @@ Item {
 
     Column {
         anchors.centerIn: parent
-        spacing: 6
+        spacing: 4
 
         Text {
             text: Math.round(g.value).toString()
             color: "white"
-            font.pixelSize: 56
+            font.pixelSize: 52
             font.bold: true
+            font.family: "DejaVu Sans"
             horizontalAlignment: Text.AlignHCenter
-            width: parent.width
         }
 
         Text {
             text: g.unit
             color: "white"
-            opacity: 0.75
-            font.pixelSize: 16
+            opacity: 0.6
+            font.pixelSize: 22
+            font.family: "DejaVu Sans"
             horizontalAlignment: Text.AlignHCenter
-            width: parent.width
         }
 
         Text {
             text: g.label
             color: "white"
-            opacity: 0.55
-            font.pixelSize: 14
+            opacity: 0.5
+            font.pixelSize: 12
             font.letterSpacing: 2
+            font.family: "DejaVu Sans"
             horizontalAlignment: Text.AlignHCenter
-            width: parent.width
         }
     }
 }
