@@ -20,6 +20,9 @@ qt_add_qml_module(veya_ui
         qml/Home.qml
         qml/Drive.qml
         qml/Diagnostic.qml
+        qml/DevDiagnostic.qml
+        qml/ReportScreen.qml
+        qml/LiveSessionScreen.qml
         qml/providers/VehicleDataProvider.qml
         qml/components/GaugeRing.qml
         qml/components/StatusIconBar.qml
