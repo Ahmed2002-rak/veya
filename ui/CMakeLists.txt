@@ -4,7 +4,7 @@ project(veya_ui LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick WebSockets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick WebSockets Svg)
 
 qt_standard_project_setup()
 
@@ -39,6 +39,7 @@ qt_add_qml_module(veya_ui
         qml/assets/icon_settings.svg
         qml/assets/icon_headlights.svg
         qml/assets/car_silhouette.png
+        qml/assets/car_silhouette.svg
 )
 
-target_link_libraries(veya_ui PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::WebSockets)
+target_link_libraries(veya_ui PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::WebSockets Qt6::Svg)

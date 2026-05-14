@@ -8,11 +8,13 @@ Item {
     property real spacing:   4
 
     // TODO: VehicleDataProvider.warnEngine does not exist yet (Phase 2.2 scope).
-    // Bound to false as placeholder; do NOT add this property to the provider.
-    readonly property bool warnEngine: false
+    // Bound to debugForceWarnings as placeholder so the icon lights up during
+    // debug forced-warning tests. Remove/replace in Phase 2.2.
+    readonly property bool warnEngine: VehicleDataProvider.debugForceWarnings
 
     readonly property bool _anyActive: warnEngine
                                     || VehicleDataProvider.warnCoolantHigh
+                                    || VehicleDataProvider.warnOverspeed
                                     || VehicleDataProvider.warnLowFuel
                                     || VehicleDataProvider.warnLowBattery
 

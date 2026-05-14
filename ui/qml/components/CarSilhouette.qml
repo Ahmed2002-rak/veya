@@ -18,7 +18,8 @@ Item {
         source: Qt.resolvedUrl(root.imageSource)
         fillMode: Image.PreserveAspectFit
         smooth: true
-        sourceSize: Qt.size(width * 2, height * 2)
+        sourceSize.width: width
+        sourceSize.height: height
         visible: img.status === Image.Ready
         opacity: 0.95
     }

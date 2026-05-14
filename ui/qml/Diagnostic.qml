@@ -5,6 +5,7 @@ import Veya 1.0
 
 Page {
     id: root
+    clip: true
 
     property var nav: null
     background: Rectangle { color: "transparent" }
@@ -244,9 +245,9 @@ Page {
             // ── LEFT PANEL (40%): DTC CODES ───────────────────────────────
             GlassCard {
                 Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.40
-                Layout.maximumWidth:   root.width * 0.40
-                Layout.minimumWidth:   root.width * 0.40
+                Layout.preferredWidth: (root.width - 58) * 0.40
+                Layout.maximumWidth:   (root.width - 58) * 0.40
+                Layout.minimumWidth:   (root.width - 58) * 0.40
                 Layout.fillWidth: false
 
                 ColumnLayout {
@@ -397,9 +398,9 @@ Page {
             // ── RIGHT PANEL (60%): LIVE DATA ──────────────────────────────
             GlassCard {
                 Layout.fillHeight: true
-                Layout.preferredWidth: root.width * 0.60
-                Layout.maximumWidth:   root.width * 0.60
-                Layout.minimumWidth:   root.width * 0.60
+                Layout.preferredWidth: (root.width - 58) * 0.60
+                Layout.maximumWidth:   (root.width - 58) * 0.60
+                Layout.minimumWidth:   (root.width - 58) * 0.60
                 Layout.fillWidth: false
 
                 ColumnLayout {
@@ -423,7 +424,7 @@ Page {
 
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "RPM"
                             val:   Math.round(VehicleDataProvider.rpm).toString()
@@ -432,7 +433,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "SPEED"
                             val:   VehicleDataProvider.speedKph.toFixed(1)
@@ -441,7 +442,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "COOLANT"
                             val:   VehicleDataProvider.coolantC.toFixed(1)
@@ -450,7 +451,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "BATTERY"
                             val:   VehicleDataProvider.batteryV.toFixed(1)
@@ -459,7 +460,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "FUEL"
                             val:   VehicleDataProvider.fuelLevel.toFixed(0)
@@ -468,7 +469,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "THROTTLE"
                             val:   VehicleDataProvider.throttlePct.toFixed(0)
@@ -477,7 +478,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "ENGINE LOAD"
                             val:   VehicleDataProvider.engineLoad.toFixed(0)
@@ -488,7 +489,7 @@ Page {
                         }
                         MetricTile {
                             Layout.fillWidth: true
-                            Layout.preferredWidth: (root.width * 0.60 - 36 - 8) / 2
+                            Layout.preferredWidth: ((root.width - 58) * 0.60 - 36 - 8) / 2
                             Layout.preferredHeight: 56
                             label: "INTAKE"
                             val:   VehicleDataProvider.intakeTempC.toFixed(1)

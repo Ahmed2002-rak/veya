@@ -5,6 +5,7 @@ import Veya 1.0
 
 Page {
     id: root
+    clip: true
 
     property var nav: null
     background: Rectangle { color: "transparent" }
@@ -354,8 +355,8 @@ Page {
 
                             CarSilhouette {
                                 anchors.centerIn: parent
-                                width:  parent.width * 0.68
-                                height: Math.min(parent.height * 0.88, parent.width * 1.30)
+                                width:  parent.width * 0.45
+                                height: width * 1.38
                                 z: 1
                                 fallbackColor: root.cCyan
                             }
@@ -402,7 +403,7 @@ Page {
                             min: 0; max: 8000
                             value:  VehicleDataProvider.rpm
                             unit:   "rpm"
-                            label:  "RPM"
+                            label:  ""
                             accent: root.cGreen
                         }
 

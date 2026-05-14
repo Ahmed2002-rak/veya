@@ -1,0 +1,86 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Veya 1.0
+
+ApplicationWindow {
+    id: win
+    visible: true
+    visibility: Window.FullScreen
+    title: "VEYA"
+    color: "#0B0F14"
+    flags: Qt.FramelessWindowHint
+    font.family: "DejaVu Sans"
+
+    // Key-catcher (reliable)
+    Item {
+        id: keyCatcher
+        anchors.fill: parent
+        focus: true
+
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Q &&
+                (event.modifiers & Qt.ControlModifier) &&
+                (event.modifiers & Qt.ShiftModifier)) {
+                Qt.quit()
+                event.accepted = true
+            }
+        }
+    }
+
+    // Background
+    Rectangle {
+        anchors.fill: parent
+        color: "transparent"
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0B0F14" }
+            GradientStop { position: 1.0; color: "#070A0E" }
+        }
+        Repeater {
+            model: 70
+            Rectangle {
+                width: 2; height: 2; radius: 1
+                color: Qt.rgba(1,1,1,0.08)
+                x: Math.random() * parent.width
+                y: Math.random() * parent.height
+            }
+        }
+    }
+
+    // PHASE-2.1.1-DEBUG: Force all warnings ON for 10 seconds.
+    // Remove this block in Phase 2.2 when real warning UX is finalized.
+    Shortcut {
+        sequence: "Ctrl+Shift+W"
+        context: Qt.ApplicationShortcut
+        onActivated: {
+            VehicleDataProvider.debugForceWarnings = true
+            debugWarningTimer.restart()
+        }
+    }
+    Timer {
+        id: debugWarningTimer
+        interval: 10000
+        repeat: false
+        onTriggered: VehicleDataProvider.debugForceWarnings = false
+    }
+
+// PHASE-2.1-TELLTALES-TEST: auto-trigger warnings on app launch.
+// REMOVE this block once telltale rendering is verified.
+Timer {
+    interval: 5000
+    running: true
+    repeat: false
+    onTriggered: {
+        console.log("[telltales-test] auto-trigger firing")
+        VehicleDataProvider.debugForceWarnings = true
+        debugWarningTimer.restart()
+    }
+}
+    StackView {
+        id: stack
+        anchors.fill: parent
+
+        // IMPORTANT: pass nav reference explicitly
+        initialItem: Home { nav: stack }
+    }
+}
