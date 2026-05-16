@@ -13,6 +13,10 @@ Page {
 
     function clamp(x, a, b) { return Math.max(a, Math.min(b, x)) }
 
+    // When source is connected but not yet streaming, show zeros rather than
+    // frozen last-known values (so the user doesn't think 0 km/h is real data).
+    readonly property bool _zeroGauges: VehicleDataProvider.sourceState === "no_telemetry"
+
     // ── Palette ───────────────────────────────────────────────────────────
     readonly property color cBg:      "#0B0F14"
     readonly property color cBorder:  "#1A4040"
@@ -297,18 +301,25 @@ Page {
             }
         }
 
-        // ── OBD-II waiting banner (Phase 3.0a) ───────────────────────────────
-        // Visible when in ELM/REAL mode but no telemetry has arrived for 3 s.
-        // Gauges and metrics continue showing last-known frozen values.
+        // ── OBD-II source banner (Phase 3.0b) ───────────────────────────────
+        // Three-state banner driven by VehicleDataProvider.sourceState:
+        //   "ok"           — hidden (mock mode or live telemetry flowing)
+        //   "waiting"      — amber: no source connected at all
+        //   "no_telemetry" — cyan: source connected but no data yet (zero gauges)
         Rectangle {
+            id: sourceBanner
             Layout.fillWidth: true
-            Layout.preferredHeight: VehicleDataProvider.noSourceConnected ? 32 : 0
-            visible: VehicleDataProvider.noSourceConnected
+            readonly property bool showBanner: VehicleDataProvider.sourceState !== "ok"
+            Layout.preferredHeight: showBanner ? 32 : 0
+            visible: showBanner
             clip: true
             radius: 6
-            color: "#4A3D1A"
-            border.color: "#FFB347"; border.width: 1
+            color: VehicleDataProvider.sourceState === "no_telemetry" ? "#1A2E3A" : "#4A3D1A"
+            border.color: VehicleDataProvider.sourceState === "no_telemetry" ? "#4DD2FF" : "#FFB347"
+            border.width: 1
             Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
+            Behavior on color        { ColorAnimation { duration: 300 } }
+            Behavior on border.color { ColorAnimation { duration: 300 } }
 
             Row {
                 anchors.centerIn: parent
@@ -317,9 +328,10 @@ Page {
                 Rectangle {
                     width: 8; height: 8; radius: 4
                     anchors.verticalCenter: parent.verticalCenter
-                    color: "#FFB347"
+                    color: VehicleDataProvider.sourceState === "no_telemetry" ? "#4DD2FF" : "#FFB347"
+                    Behavior on color { ColorAnimation { duration: 300 } }
                     SequentialAnimation on opacity {
-                        running: VehicleDataProvider.noSourceConnected
+                        running: sourceBanner.showBanner
                         loops: Animation.Infinite
                         NumberAnimation { to: 0.5; duration: 750 }
                         NumberAnimation { to: 1.0; duration: 750 }
@@ -328,10 +340,13 @@ Page {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Waiting for OBD-II device..."
-                    color: "#FFB347"
+                    text: VehicleDataProvider.sourceState === "no_telemetry"
+                          ? "Connected — waiting for data"
+                          : "Waiting for OBD-II device..."
+                    color: VehicleDataProvider.sourceState === "no_telemetry" ? "#4DD2FF" : "#FFB347"
                     font.pixelSize: 14; font.bold: true
                     font.family: "DejaVu Sans"
+                    Behavior on color { ColorAnimation { duration: 300 } }
                 }
             }
         }
@@ -371,7 +386,7 @@ Page {
                             Layout.fillWidth:  true
                             Layout.fillHeight: true
                             min: 0; max: 200
-                            value:  VehicleDataProvider.speedKph
+                            value:  root._zeroGauges ? 0 : VehicleDataProvider.speedKph
                             unit:   "km/h"
                             label:  ""
                             accent: root.cCyan
@@ -380,7 +395,8 @@ Page {
                         SpeedBar {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 14
-                            value: clamp(VehicleDataProvider.speedKph / 200.0, 0, 1)
+                            value: root._zeroGauges ? 0
+                                   : clamp(VehicleDataProvider.speedKph / 200.0, 0, 1)
                             segmentCount: 8
                             accentColor: VehicleDataProvider.warnOverspeed
                                          ? root.cWarn : root.cCyan
@@ -477,7 +493,7 @@ Page {
                             Layout.fillWidth:  true
                             Layout.fillHeight: true
                             min: 0; max: 8000
-                            value:  VehicleDataProvider.rpm
+                            value:  root._zeroGauges ? 0 : VehicleDataProvider.rpm
                             unit:   "rpm"
                             label:  ""
                             accent: root.cGreen
@@ -493,9 +509,9 @@ Page {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 52
                                 label:  "COOLANT"
-                                val:    VehicleDataProvider.coolantC.toFixed(1)
+                                val:    (root._zeroGauges ? 0.0 : VehicleDataProvider.coolantC).toFixed(1)
                                 unit:   "°C"
-                                alert:  VehicleDataProvider.warnCoolantHigh
+                                alert:  !root._zeroGauges && VehicleDataProvider.warnCoolantHigh
                                 accent: VehicleDataProvider.warnCoolantHigh ? root.cWarn : root.cCyan
                             }
 
@@ -503,9 +519,9 @@ Page {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 52
                                 label:  "BATTERY"
-                                val:    VehicleDataProvider.batteryV.toFixed(1)
+                                val:    (root._zeroGauges ? 0.0 : VehicleDataProvider.batteryV).toFixed(1)
                                 unit:   "V"
-                                alert:  VehicleDataProvider.warnLowBattery
+                                alert:  !root._zeroGauges && VehicleDataProvider.warnLowBattery
                                 accent: VehicleDataProvider.warnLowBattery ? root.cWarn : "#47FF9A"
                             }
 
@@ -513,9 +529,9 @@ Page {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 52
                                 label:  "FUEL"
-                                val:    VehicleDataProvider.fuelLevel.toFixed(0)
+                                val:    (root._zeroGauges ? 0.0 : VehicleDataProvider.fuelLevel).toFixed(0)
                                 unit:   "%"
-                                alert:  VehicleDataProvider.warnLowFuel
+                                alert:  !root._zeroGauges && VehicleDataProvider.warnLowFuel
                                 accent: VehicleDataProvider.warnLowFuel ? root.cAmber : "#47FF9A"
                             }
 
@@ -523,7 +539,7 @@ Page {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 52
                                 label:  "INTAKE"
-                                val:    VehicleDataProvider.intakeTempC.toFixed(1)
+                                val:    (root._zeroGauges ? 0.0 : VehicleDataProvider.intakeTempC).toFixed(1)
                                 unit:   "°C"
                                 alert:  false
                                 accent: root.cCyan

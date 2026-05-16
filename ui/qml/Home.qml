@@ -208,50 +208,108 @@ Page {
         anchors.rightMargin:    10
     }
 
-    // ── Wi-Fi indicator — floating, top-LEFT corner ───────────────────────
-    // Mirrors the mode toggle on the right. Pushes directly to WifiManager.
-    Item {
-        id: wifiIndicator
+    // ── Top-left indicator cluster — Wi-Fi and Bluetooth dots ────────────
+    Column {
         anchors { top: parent.top; left: parent.left; topMargin: 16; leftMargin: 16 }
-        width: 48; height: 48
+        spacing: 4
 
-        readonly property color dotColor: {
-            if (!VehicleDataProvider.connected)  return "#6B7785"   // grey — WS not up
-            if (WifiStatusProvider.connected)    return "#47FF9A"   // green — Wi-Fi up
-            return "#FFB347"                                        // amber — disconnected
-        }
+        // Wi-Fi indicator
+        Item {
+            id: wifiIndicator
+            width: 48; height: 48
 
-        scale: wifiMouse.pressed ? 0.95 : (wifiMouse.containsMouse ? 1.05 : 1.0)
-        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-
-        ColumnLayout {
-            anchors.centerIn: parent
-            spacing: 4
-
-            Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: "WIFI"
-                color: Qt.rgba(1, 1, 1, 0.80)
-                font.pixelSize: 11; font.bold: true
-                font.letterSpacing: 1.2; font.family: "DejaVu Sans"
+            readonly property color dotColor: {
+                if (!VehicleDataProvider.connected)  return "#6B7785"
+                if (WifiStatusProvider.connected)    return "#47FF9A"
+                return "#FFB347"
             }
 
-            Rectangle {
-                Layout.alignment: Qt.AlignHCenter
-                width: 8; height: 8; radius: 4
-                color: wifiIndicator.dotColor
-                Behavior on color { ColorAnimation { duration: 400 } }
+            scale: wifiMouse.pressed ? 0.95 : (wifiMouse.containsMouse ? 1.05 : 1.0)
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                spacing: 4
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "WIFI"
+                    color: Qt.rgba(1, 1, 1, 0.80)
+                    font.pixelSize: 11; font.bold: true
+                    font.letterSpacing: 1.2; font.family: "DejaVu Sans"
+                }
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    width: 8; height: 8; radius: 4
+                    color: wifiIndicator.dotColor
+                    Behavior on color { ColorAnimation { duration: 400 } }
+                }
+            }
+
+            MouseArea {
+                id: wifiMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.nav)
+                        root.nav.push(Qt.resolvedUrl("WifiManager.qml"), { nav: root.nav })
+                }
             }
         }
 
-        MouseArea {
-            id: wifiMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (root.nav)
-                    root.nav.push(Qt.resolvedUrl("WifiManager.qml"), { nav: root.nav })
+        // Bluetooth indicator
+        Item {
+            id: btIndicator
+            width: 48; height: 48
+
+            // Colour states:
+            // Green  #47FF9A — ESP32 connected and streaming
+            // Cyan   #4DD2FF — paired but bridge not running / no telemetry yet
+            // Amber  #FFB347 — BT adapter on, no paired device
+            // Grey   #6B7785 — adapter off or status unknown
+            readonly property color dotColor: {
+                if (!VehicleDataProvider.connected)                              return "#6B7785"
+                if (BluetoothStatusProvider.esp32Connected)                     return "#47FF9A"
+                if (BluetoothStatusProvider.bridgeRunning)                      return "#4DD2FF"
+                if (BluetoothStatusProvider.pairedDevices.length > 0)           return "#4DD2FF"
+                if (BluetoothStatusProvider.adapterPowered)                     return "#FFB347"
+                return "#6B7785"
+            }
+
+            scale: btMouse.pressed ? 0.95 : (btMouse.containsMouse ? 1.05 : 1.0)
+            Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                spacing: 4
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "BT"
+                    color: Qt.rgba(1, 1, 1, 0.80)
+                    font.pixelSize: 11; font.bold: true
+                    font.letterSpacing: 1.2; font.family: "DejaVu Sans"
+                }
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    width: 8; height: 8; radius: 4
+                    color: btIndicator.dotColor
+                    Behavior on color { ColorAnimation { duration: 400 } }
+                }
+            }
+
+            MouseArea {
+                id: btMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.nav)
+                        root.nav.push(Qt.resolvedUrl("BluetoothManager.qml"), { nav: root.nav })
+                }
             }
         }
     }

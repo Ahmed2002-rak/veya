@@ -2,7 +2,8 @@ module Veya
 
 singleton VehicleDataProvider  1.0 providers/VehicleDataProvider.qml
 singleton UserProfile           1.0 providers/UserProfile.qml
-singleton WifiStatusProvider    1.0 providers/WifiStatusProvider.qml
+singleton WifiStatusProvider         1.0 providers/WifiStatusProvider.qml
+singleton BluetoothStatusProvider   1.0 providers/BluetoothStatusProvider.qml
 GaugeRing       1.0 components/GaugeRing.qml
 OnScreenKeyboard 1.0 components/OnScreenKeyboard.qml
 StatusIconBar   1.0 components/StatusIconBar.qml
