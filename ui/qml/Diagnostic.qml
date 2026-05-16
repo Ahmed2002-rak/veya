@@ -111,6 +111,42 @@ Page {
 
             Item { Layout.fillWidth: true }
 
+            // Settings icon
+            Item {
+                Layout.preferredWidth: 36
+                Layout.preferredHeight: 36
+                Layout.alignment: Qt.AlignVCenter
+                Image {
+                    id: diagSettingsIcon
+                    anchors.fill: parent
+                    source: "assets/icon_settings.svg"
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize: Qt.size(72, 72)
+                    smooth: true
+                    visible: false
+                }
+                MultiEffect {
+                    source: diagSettingsIcon
+                    anchors.fill: diagSettingsIcon
+                    colorization: 1.0
+                    colorizationColor: root.cCyan
+                    opacity: diagSettingsMouse.containsMouse ? 1.0 : 0.70
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                }
+                scale: diagSettingsMouse.pressed ? 0.90 : (diagSettingsMouse.containsMouse ? 1.1 : 1.0)
+                Behavior on scale { NumberAnimation { duration: 150 } }
+                MouseArea {
+                    id: diagSettingsMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (root.nav)
+                            root.nav.push(Qt.resolvedUrl("SettingsScreen.qml"), { nav: root.nav })
+                    }
+                }
+            }
+
             // Connection badge + DemoBadge stacked
             ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
@@ -234,7 +270,7 @@ Page {
                             Image {
                                 id: reportIcon
                                 anchors.fill: parent
-                                source: "qrc:/qt/qml/Veya/qml/assets/icon_settings.svg"
+                                source: "assets/icon_settings.svg"
                                 fillMode: Image.PreserveAspectFit
                                 sourceSize: Qt.size(112, 112)
                                 smooth: true
@@ -323,7 +359,7 @@ Page {
                             Image {
                                 id: liveIcon
                                 anchors.fill: parent
-                                source: "qrc:/qt/qml/Veya/qml/assets/icon_phone.svg"
+                                source: "assets/icon_phone.svg"
                                 fillMode: Image.PreserveAspectFit
                                 sourceSize: Qt.size(112, 112)
                                 smooth: true

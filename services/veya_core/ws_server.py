@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import pathlib
 import time
 import warnings as _warnings
 from typing import Any, Awaitable, Callable, Dict, Optional, Set
@@ -162,8 +163,53 @@ class UiWebSocketServer:
                         await self._on_ui_command({"cmd": "set_mode", "mode": mode})
                     except Exception:
                         log.exception("[ws] on_ui_command callback raised")
+                elif obj.get("cmd") == "save_profile":
+                    # New in Phase 2.2b — not part of the telemetry schema freeze;
+                    # handled here rather than routing through core (pure file I/O).
+                    data = obj.get("data", {})
+                    if isinstance(data, dict):
+                        await self._handle_save_profile(ws, data)
+                elif obj.get("cmd") == "load_profile":
+                    await self._handle_load_profile(ws)
         except websockets.ConnectionClosed:
             pass
         finally:
             self._clients.discard(ws)
             log.info("[ws] - UI client %s  (%d connected)", peer, len(self._clients))
+
+    # ── Profile persistence (Phase 2.2b) ─────────────────────────────────────
+    # These commands are orthogonal to telemetry; adding them does NOT violate
+    # the telemetry-schema freeze (see docs/MEMORY.md §3.1).
+
+    async def _handle_save_profile(self, ws: Any, data: Dict[str, Any]) -> None:
+        profile_dir = pathlib.Path.home() / ".veya"
+        try:
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            profile_path = profile_dir / "user_profile.json"
+            profile_path.write_text(json.dumps(data, indent=2))
+            await ws.send(json.dumps({"type": "profile_saved", "ok": True}))
+            log.info("[ws] profile saved → %s", profile_path)
+        except Exception as exc:
+            log.error("[ws] save_profile failed: %s", exc)
+            try:
+                await ws.send(json.dumps({"type": "profile_saved", "ok": False,
+                                          "error": str(exc)}))
+            except Exception:
+                pass
+
+    async def _handle_load_profile(self, ws: Any) -> None:
+        profile_path = pathlib.Path.home() / ".veya" / "user_profile.json"
+        try:
+            if profile_path.exists():
+                data = json.loads(profile_path.read_text())
+            else:
+                data = {}
+            await ws.send(json.dumps({"type": "profile_data", "data": data}))
+            log.info("[ws] profile loaded ← %s", profile_path)
+        except Exception as exc:
+            log.error("[ws] load_profile failed: %s", exc)
+            try:
+                await ws.send(json.dumps({"type": "profile_data", "data": {},
+                                          "error": str(exc)}))
+            except Exception:
+                pass

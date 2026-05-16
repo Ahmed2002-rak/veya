@@ -23,7 +23,10 @@ qt_add_qml_module(veya_ui
         qml/DevDiagnostic.qml
         qml/ReportScreen.qml
         qml/LiveSessionScreen.qml
+        qml/SettingsScreen.qml
+        qml/WifiManager.qml
         qml/providers/VehicleDataProvider.qml
+        qml/providers/UserProfile.qml
         qml/components/GaugeRing.qml
         qml/components/StatusIconBar.qml
         qml/components/CarSilhouette.qml
@@ -32,6 +35,10 @@ qt_add_qml_module(veya_ui
         qml/components/SpeedBar.qml
         qml/components/AnimatedRoad.qml
         qml/components/WarningTelltales.qml
+        qml/components/OnScreenKeyboard.qml
+        qml/onboarding/WelcomeOnboarding.qml
+        qml/onboarding/DriverOnboarding.qml
+        qml/onboarding/CarOnboarding.qml
 
     RESOURCES
         qml/qmldir
@@ -46,3 +53,4 @@ qt_add_qml_module(veya_ui
 )
 
 target_link_libraries(veya_ui PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::WebSockets Qt6::Svg)
+qt_import_plugins(veya_ui INCLUDE Qt6::QSvgPlugin)
