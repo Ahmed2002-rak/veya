@@ -10,12 +10,17 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 
 
 def scan() -> dict:
-    # Trigger a rescan first (non-blocking, best-effort)
-    subprocess.run(["nmcli", "device", "wifi", "rescan"],
-                   capture_output=True, timeout=8)
+    # Trigger a rescan first — best-effort, ignore timeout/errors
+    try:
+        subprocess.run(["nmcli", "device", "wifi", "rescan"],
+                       capture_output=True, timeout=8)
+    except Exception:
+        pass
+    time.sleep(2)
     r = subprocess.run(
         ["nmcli", "--terse", "--fields", "SSID,SIGNAL,SECURITY,IN-USE",
          "device", "wifi", "list"],

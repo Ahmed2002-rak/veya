@@ -1,13 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Effects
-import QtCore
+import QtWebSockets
 import Veya 1.0
-
-// Note: runWifi() uses QtCore.Process (spawn helper) — this works on Qt 6.8.2
-// but requires a running X session for matchbox-keyboard (which we've replaced
-// with OnScreenKeyboard for text input). Process for wifi.py is still valid.
 
 Page {
     id: root
@@ -22,107 +17,116 @@ Page {
     readonly property color cWarn:   "#FF4D6D"
     readonly property color cGreen:  "#47FF9A"
 
-    readonly property string helperPath: "/home/pfe/veya/services/veya_core/helpers/wifi.py"
-
     // ── State ────────────────────────────────────────────────────────────
-    property bool   scanning:       false
-    property bool   connecting:     false
-    property string statusMessage:  ""
-    property string currentSSID:    ""
+    property bool   scanning:         false
+    property bool   connecting:       false
+    property string statusMessage:    ""
+    property string currentSSID:      ""
     property bool   currentConnected: false
-    property var    networks:       []
+    property var    networks:         []
 
     // Connect popup state
-    property bool   popupVisible:   false
-    property string popupSSID:      ""
-    property string popupPassword:  ""
+    property bool   popupVisible:  false
+    property string popupSSID:     ""
+    property string popupPassword: ""
 
     // On-screen keyboard state
-    property bool   kbVisible:      false
+    property bool   kbVisible: false
 
-    // ── Python helper runner ─────────────────────────────────────────────
-    function runWifi(args, onDone) {
-        const proc = Qt.createQmlObject(
-            'import QtCore; Process { program: "python3" }',
-            root, "wifiProc")
-        proc.arguments = [root.helperPath].concat(args)
-        var output = ""
-        proc.onReadyReadStandardOutput.connect(function() {
-            output += proc.readAllStandardOutput()
-        })
-        proc.onFinished.connect(function(exitCode) {
-            try {
-                const data = JSON.parse(output.trim())
-                onDone(exitCode, data)
-            } catch(e) {
-                onDone(exitCode, { error: "Parse error: " + e })
+    // ── WebSocket ─────────────────────────────────────────────────────────
+    // Own connection — separate from VehicleDataProvider to keep concerns clean.
+    WebSocket {
+        id: wifiWs
+        url: "ws://127.0.0.1:8765"
+        active: true
+
+        onStatusChanged: {
+            if (status === WebSocket.Open) {
+                root.sendCmd({ cmd: "wifi_status" })
+                root.doScan()
             }
-            proc.destroy()
-        })
-        proc.start()
+        }
+
+        onTextMessageReceived: function(message) {
+            let obj
+            try { obj = JSON.parse(message) } catch(e) { return }
+
+            // Only handle Wi-Fi response frames (ignore telemetry frames)
+            const t = obj.type
+            if (!t) return
+
+            if (t === "wifi_scan_result") {
+                root.scanning = false
+                if (obj.error && obj.error.length > 0) {
+                    root.statusMessage = "Scan error: " + obj.error
+                } else {
+                    root.networks      = obj.networks || []
+                    root.statusMessage = root.networks.length > 0
+                        ? root.networks.length + " networks found"
+                        : "No networks found"
+                }
+            } else if (t === "wifi_status") {
+                root.currentConnected = obj.connected || false
+                root.currentSSID      = obj.ssid      || ""
+            } else if (t === "wifi_connect_result") {
+                root.connecting = false
+                if (obj.ok) {
+                    root.statusMessage    = 'Connected to "' + root.popupSSID + '"'
+                    root.currentSSID      = root.popupSSID
+                    root.currentConnected = true
+                    root.popupVisible     = false
+                    root.kbVisible        = false
+                    wifiKeyboard.hide()
+                    // Refresh status to get real device info
+                    root.sendCmd({ cmd: "wifi_status" })
+                } else {
+                    root.statusMessage = "Failed: " + (obj.error || "unknown error")
+                }
+            } else if (t === "wifi_disconnect_result") {
+                if (obj.ok) {
+                    root.statusMessage    = "Disconnected"
+                    root.currentSSID      = ""
+                    root.currentConnected = false
+                    root.networks         = []
+                } else {
+                    root.statusMessage = "Disconnect failed: " + (obj.error || "")
+                }
+            }
+        }
+
+        onErrorStringChanged: {
+            if (errorString && errorString.length > 0)
+                console.warn("[WifiManager] ws error:", errorString)
+        }
     }
 
-    function refreshStatus() {
-        runWifi(["status"], function(code, data) {
-            if (data.connected) {
-                root.currentSSID      = data.ssid || ""
-                root.currentConnected = true
-            } else {
-                root.currentSSID      = ""
-                root.currentConnected = false
-            }
-        })
+    function sendCmd(obj) {
+        if (wifiWs.status === WebSocket.Open) {
+            wifiWs.sendTextMessage(JSON.stringify(obj))
+        } else {
+            console.warn("[WifiManager] WS not open, cannot send:", JSON.stringify(obj))
+        }
     }
 
     function doScan() {
-        root.scanning       = true
-        root.statusMessage  = "Scanning…"
-        runWifi(["scan"], function(code, data) {
-            root.scanning = false
-            if (data.error) {
-                root.statusMessage = "Scan error: " + data.error
-                return
-            }
-            root.networks      = data.networks || []
-            root.statusMessage = root.networks.length > 0
-                                 ? root.networks.length + " networks found"
-                                 : "No networks found"
-        })
+        root.scanning      = true
+        root.statusMessage = "Scanning…"
+        root.sendCmd({ cmd: "wifi_scan" })
     }
 
     function doConnect(ssid, password) {
         root.connecting    = true
-        root.popupVisible  = false
         root.statusMessage = 'Connecting to "' + ssid + '"...'
-        runWifi(["connect", ssid, password], function(code, data) {
-            root.connecting = false
-            if (data.ok) {
-                root.statusMessage    = 'Connected to "' + ssid + '"'
-                root.currentSSID      = ssid
-                root.currentConnected = true
-            } else {
-                root.statusMessage = "Failed: " + (data.error || "unknown error")
-            }
-        })
+        root.sendCmd({ cmd: "wifi_connect", ssid: ssid, password: password })
     }
 
     function doDisconnect() {
         root.statusMessage = "Disconnecting…"
-        runWifi(["disconnect"], function(code, data) {
-            if (data.ok) {
-                root.statusMessage    = "Disconnected"
-                root.currentSSID      = ""
-                root.currentConnected = false
-                root.networks         = []
-            } else {
-                root.statusMessage = "Disconnect failed: " + (data.error || "")
-            }
-        })
+        root.sendCmd({ cmd: "wifi_disconnect" })
     }
 
     Component.onCompleted: {
-        refreshStatus()
-        doScan()
+        // scan is fired in onStatusChanged once WS is open
     }
 
     // ── Background ───────────────────────────────────────────────────────
@@ -340,7 +344,7 @@ Page {
                 opacity: root.scanning ? 0.50 : 1.0
                 Text {
                     anchors.centerIn: parent
-                    text: root.scanning ? "…" : "⟳ Scan"
+                    text: root.scanning ? "…" : "⟳ Refresh"
                     color: root.cCyan; font.pixelSize: 12
                     font.family: "DejaVu Sans"
                 }
@@ -439,11 +443,20 @@ Page {
                     }
                 }
 
+                // Scanning overlay
+                Text {
+                    anchors.centerIn: parent
+                    visible: root.scanning
+                    text: "Scanning…"
+                    color: root.cCyan
+                    font.pixelSize: 14; font.family: "DejaVu Sans"
+                }
+
                 // Empty state
                 Text {
                     anchors.centerIn: parent
                     visible: root.networks.length === 0 && !root.scanning
-                    text: "No networks — tap Scan to search"
+                    text: "No networks found"
                     color: Qt.rgba(1,1,1,0.30)
                     font.pixelSize: 14; font.family: "DejaVu Sans"
                 }

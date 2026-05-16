@@ -297,6 +297,45 @@ Page {
             }
         }
 
+        // ── OBD-II waiting banner (Phase 3.0a) ───────────────────────────────
+        // Visible when in ELM/REAL mode but no telemetry has arrived for 3 s.
+        // Gauges and metrics continue showing last-known frozen values.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: VehicleDataProvider.noSourceConnected ? 32 : 0
+            visible: VehicleDataProvider.noSourceConnected
+            clip: true
+            radius: 6
+            color: "#4A3D1A"
+            border.color: "#FFB347"; border.width: 1
+            Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 8
+
+                Rectangle {
+                    width: 8; height: 8; radius: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: "#FFB347"
+                    SequentialAnimation on opacity {
+                        running: VehicleDataProvider.noSourceConnected
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.5; duration: 750 }
+                        NumberAnimation { to: 1.0; duration: 750 }
+                    }
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Waiting for OBD-II device..."
+                    color: "#FFB347"
+                    font.pixelSize: 14; font.bold: true
+                    font.family: "DejaVu Sans"
+                }
+            }
+        }
+
         // ── MAIN AREA: unified panel ──────────────────────────────────────
         Item {
             Layout.fillWidth: true

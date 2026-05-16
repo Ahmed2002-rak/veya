@@ -27,6 +27,7 @@ qt_add_qml_module(veya_ui
         qml/WifiManager.qml
         qml/providers/VehicleDataProvider.qml
         qml/providers/UserProfile.qml
+        qml/providers/WifiStatusProvider.qml
         qml/components/GaugeRing.qml
         qml/components/StatusIconBar.qml
         qml/components/CarSilhouette.qml

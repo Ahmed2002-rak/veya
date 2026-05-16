@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Effects
+import QtWebSockets
 import Veya 1.0
 
 Page {
@@ -19,6 +20,31 @@ Page {
     readonly property color cText:   "white"
     readonly property color cWarn:   "#FF4D6D"
     readonly property color cDim:    Qt.rgba(1, 1, 1, 0.6)
+
+    // ── Server config (Phase 3.0a) ───────────────────────────────────────
+    property string reportUrl: ""
+
+    readonly property string buttonTooltip: {
+        if (reportUrl.length === 0) return "Server not configured — run set_server_url.py report <url>"
+        return "Server unreachable — check network connection"
+    }
+
+    WebSocket {
+        id: reportConfigWs
+        url: "ws://127.0.0.1:8765"
+        active: true
+        onStatusChanged: {
+            if (status === WebSocket.Open)
+                reportConfigWs.sendTextMessage(JSON.stringify({ cmd: "load_server_config" }))
+        }
+        onTextMessageReceived: function(message) {
+            let obj
+            try { obj = JSON.parse(message) } catch(e) { return }
+            if (obj.type === "server_config") {
+                root.reportUrl = (obj.data && obj.data.report_url) ? obj.data.report_url : ""
+            }
+        }
+    }
 
     // ── Background ───────────────────────────────────────────────────────
     Rectangle {
@@ -306,7 +332,7 @@ Page {
             }
 
             ToolTip.visible: disabledHover.containsMouse
-            ToolTip.text: "Backend service not configured yet (Phase 3)"
+            ToolTip.text: root.buttonTooltip
 
             MouseArea {
                 id: disabledHover
