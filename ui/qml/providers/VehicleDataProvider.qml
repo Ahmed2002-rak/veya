@@ -80,6 +80,22 @@ Item {
 
     readonly property bool noSourceConnected: dataMode === "elm" && dataStale
 
+    // ── Source state (Phase 3.0b) ────────────────────────────────────────────
+    // Heuristic: _sourceHelloReceived is set true when we first see telemetry
+    // data (dataStale going false). Reset on WS disconnect.
+    // Three-state sourceState drives the Drive.qml banner.
+    property bool _sourceHelloReceived: false
+
+    // "ok"          — mock mode, or ELM mode with live telemetry
+    // "waiting"     — ELM mode, no source connected at all
+    // "no_telemetry"— ELM mode, source connected (hello seen) but no data yet
+    readonly property string sourceState: {
+        if (dataMode !== "elm")       return "ok"
+        if (!_sourceHelloReceived)    return "waiting"
+        if (dataStale)                return "no_telemetry"
+        return "ok"
+    }
+
     Timer {
         id: staleTimer
         interval: 3000
@@ -173,8 +189,9 @@ Item {
             console.log("[VehicleDataProvider] ws:", s, "  url=", root.url)
 
             if (status === WebSocket.Closed) {
-                root.dataMode        = "unknown"
-                root._loggedFirstMsg = false
+                root.dataMode              = "unknown"
+                root._loggedFirstMsg       = false
+                root._sourceHelloReceived  = false
                 reconnectTimer.restart()
             }
         }
@@ -205,6 +222,7 @@ Item {
             // Reset stale timer on any telemetry frame with real data fields
             if (obj.rpm !== undefined || obj.speed_kph !== undefined) {
                 root.dataStale = false
+                root._sourceHelloReceived = true   // heuristic: data flowing = source connected
                 staleTimer.restart()
             }
             if (obj.rpm           !== undefined) root.rpm          = Number(obj.rpm)
@@ -226,11 +244,13 @@ Item {
                 // When switching to ELM, start the stale timer immediately;
                 // mock mode is never considered stale.
                 if (newMode === "elm") {
-                    root.dataStale = false
+                    root.dataStale            = false
+                    root._sourceHelloReceived = false
                     staleTimer.restart()
                 } else {
                     staleTimer.stop()
-                    root.dataStale = false
+                    root.dataStale            = false
+                    root._sourceHelloReceived = false
                 }
 
                 // Backend confirmed the requested mode → clear switching spinner

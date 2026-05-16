@@ -1,6 +1,16 @@
 # VEYA — Daily Operations Cheatsheet
 
-> Personal reference. Last updated: Phase 3.0a (May 2026).
+> Personal reference. Last updated: Phase 3.0b (May 2026).
+
+---
+
+## First-time Pi setup
+
+Run once on a fresh Pi to install Bluetooth dependencies and enable the pairing agent:
+
+```bash
+bash scripts/setup_bluetooth.sh
+```
 
 ---
 
@@ -183,6 +193,67 @@ git checkout -b feature/<name>
 # Tag a milestone after hardware verification
 git tag v3.0a-stable && git push origin v3.0a-stable
 ```
+
+---
+
+## Bluetooth (Phase 3.0b)
+
+```bash
+# Show BT adapter status
+bluetoothctl show
+
+# Scan for nearby devices (interactive — Ctrl-C to stop)
+bluetoothctl scan on
+
+# List all paired devices
+bluetoothctl devices
+
+# Pair with a device manually
+bluetoothctl pair <MAC>
+
+# Trust and connect after pairing
+bluetoothctl trust <MAC> && bluetoothctl connect <MAC>
+
+# Watch the BT bridge log
+tail -f ~/veya/logs/bt_bridge.log
+
+# Stop the BT bridge manually
+pkill -f services.veya_core.bt_bridge
+
+# View BT config (paired ESP32 MAC)
+cat ~/.veya/bt_config.json
+
+# Reset BT config (forces re-pairing from UI)
+rm ~/.veya/bt_config.json
+
+# Unblock BT adapter if rfkill-blocked
+sudo rfkill unblock bluetooth
+
+# Enable pairable mode on adapter
+echo -e "pairable on\nexit" | bluetoothctl
+```
+
+### Cleanup before production
+
+```bash
+# Unpair a specific test device
+bluetoothctl untrust <MAC> && bluetoothctl remove <MAC>
+
+# List currently paired devices
+bluetoothctl devices Paired
+
+# Reset ALL paired devices (wipes every bonded device)
+bluetoothctl devices Paired | awk '{print $2}' | xargs -I {} bluetoothctl remove {}
+```
+
+---
+
+### Wi-Fi / BT coexistence note
+
+On most Raspberry Pi models (including Pi 5), Wi-Fi and Bluetooth share the same
+physical radio. Heavy BT-SPP traffic (e.g. continuous OBD-II streaming) can
+occasionally degrade Wi-Fi throughput. For production use, prefer wired Ethernet
+for any high-bandwidth network tasks when BT-SPP is active.
 
 ---
 

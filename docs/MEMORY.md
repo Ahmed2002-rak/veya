@@ -184,7 +184,21 @@ These are *not* blockers for Phase 2.0 acceptance — they are carry-overs.
 
 ---
 
-## 8. People & contact
+## 8. System dependencies
+
+These packages must be present on the Pi for all features to work. Run `scripts/setup_bluetooth.sh` on a fresh Pi — it handles items 3–5 automatically.
+
+| Package / service | Purpose | How to install |
+| --- | --- | --- |
+| `bluez` | Core Bluetooth stack (bluetoothd, bluetoothctl) | `sudo apt-get install -y bluez` |
+| `bluez-tools` | `bt-agent` binary for no-PIN pairing | `sudo apt-get install -y bluez-tools` |
+| `bt-agent` systemd service | Runs `bt-agent --capability=NoInputNoOutput` at boot so the Pi accepts pairing requests without a PIN | `bash scripts/setup_bluetooth.sh` |
+| `matchbox-keyboard` | On-screen keyboard for the Settings / onboarding flow | `sudo apt-get install -y matchbox-keyboard` |
+| NetworkManager + `nmcli` | Wi-Fi management used by the Wi-Fi settings page and `helpers/wifi.py` | `sudo apt-get install -y network-manager` |
+
+---
+
+## 9. People & contact
 
 | Role | Name | Stream |
 | --- | --- | --- |

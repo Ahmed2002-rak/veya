@@ -35,6 +35,13 @@ Incoming UI commands:
     {"cmd": "wifi_disconnect"}
     {"cmd": "load_server_config"}
     {"cmd": "save_server_config", "data": {...}}
+    {"cmd": "bt_scan"}
+    {"cmd": "bt_status"}
+    {"cmd": "bt_pair",        "mac": "AA:BB:CC:DD:EE:FF"}
+    {"cmd": "bt_unpair",      "mac": "AA:BB:CC:DD:EE:FF"}
+    {"cmd": "bt_disconnect"}
+    {"cmd": "bt_bridge_status"}
+    {"cmd": "bt_pairing_mode", "enabled": true|false}
 
 Note: the new source-facing protocol (contract.py) is unrelated to this
 file. Translation happens in core.py.
@@ -46,6 +53,9 @@ import asyncio
 import json
 import logging
 import pathlib
+import signal
+import subprocess
+import sys
 import time
 import warnings as _warnings
 from typing import Any, Awaitable, Callable, Dict, Optional, Set
@@ -67,6 +77,10 @@ UiCommandCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 # Matches the 50 ms / 20 Hz cap that VehicleDataProvider.qml itself applies.
 UI_BROADCAST_HARD_HZ = 20.0
 _UI_MIN_PERIOD = 1.0 / UI_BROADCAST_HARD_HZ
+
+# BT bridge config and subprocess state (module-level so all handler calls share it)
+_BT_CONFIG_PATH = pathlib.Path.home() / ".veya" / "bt_config.json"
+_bt_bridge_proc: Optional[subprocess.Popen] = None  # live bridge process
 
 
 class UiWebSocketServer:
@@ -195,6 +209,24 @@ class UiWebSocketServer:
                     data = obj.get("data", {})
                     if isinstance(data, dict):
                         await self._handle_save_server_config(ws, data)
+                # ── Bluetooth commands (Phase 3.0b) ───────────────────────────
+                elif obj.get("cmd") == "bt_scan":
+                    asyncio.create_task(self._handle_bt_scan(ws))
+                elif obj.get("cmd") == "bt_status":
+                    asyncio.create_task(self._handle_bt_status(ws))
+                elif obj.get("cmd") == "bt_pair":
+                    mac = obj.get("mac", "")
+                    asyncio.create_task(self._handle_bt_pair(ws, mac))
+                elif obj.get("cmd") == "bt_unpair":
+                    mac = obj.get("mac", "")
+                    asyncio.create_task(self._handle_bt_unpair(ws, mac))
+                elif obj.get("cmd") == "bt_disconnect":
+                    asyncio.create_task(self._handle_bt_disconnect(ws))
+                elif obj.get("cmd") == "bt_bridge_status":
+                    asyncio.create_task(self._handle_bt_bridge_status(ws))
+                elif obj.get("cmd") == "bt_pairing_mode":
+                    enabled = bool(obj.get("enabled", False))
+                    asyncio.create_task(self._handle_bt_pairing_mode(ws, enabled))
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -385,6 +417,234 @@ class UiWebSocketServer:
             log.error("[ws] save_server_config failed: %s", exc)
             await self._ws_send_safe(ws, {"type": "server_config_saved", "ok": False,
                                           "error": str(exc)})
+
+    # ── Bluetooth commands (Phase 3.0b) ──────────────────────────────────────
+    # Each runs bluetooth.py helper in a thread pool so subprocess calls don't
+    # block the asyncio event loop. Same pattern as wifi_* handlers above.
+
+    async def _handle_bt_scan(self, ws: Any) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import bluetooth as _bt
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _bt.scan),
+                timeout=20.0,
+            )
+            await ws.send(json.dumps({
+                "type":    "bt_scan_result",
+                "devices": result.get("devices", []),
+                "error":   result.get("error", ""),
+            }))
+            log.info("[ws] bt_scan → %d devices", len(result.get("devices", [])))
+        except asyncio.TimeoutError:
+            log.warning("[ws] bt_scan timed out")
+            await self._ws_send_safe(ws, {"type": "bt_scan_result", "devices": [],
+                                          "error": "scan timed out"})
+        except Exception as exc:
+            log.error("[ws] bt_scan failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "bt_scan_result", "devices": [],
+                                          "error": str(exc)})
+
+    async def _handle_bt_status(self, ws: Any) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import bluetooth as _bt
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _bt.status),
+                timeout=10.0,
+            )
+            await ws.send(json.dumps({
+                "type":            "bt_status",
+                "paired":          result.get("paired", []),
+                "connected":       result.get("connected", []),
+                "adapter_powered": result.get("adapter_powered", False),
+                "error":           result.get("error", ""),
+            }))
+            log.info("[ws] bt_status → paired=%d connected=%d",
+                     len(result.get("paired", [])), len(result.get("connected", [])))
+        except asyncio.TimeoutError:
+            log.warning("[ws] bt_status timed out")
+            await self._ws_send_safe(ws, {"type": "bt_status", "paired": [], "connected": [],
+                                          "adapter_powered": False, "error": "status timed out"})
+        except Exception as exc:
+            log.error("[ws] bt_status failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "bt_status", "paired": [], "connected": [],
+                                          "adapter_powered": False, "error": str(exc)})
+
+    async def _handle_bt_pair(self, ws: Any, mac: str) -> None:
+        if not mac:
+            await self._ws_send_safe(ws, {"type": "bt_pair_result", "ok": False,
+                                          "error": "no MAC provided"})
+            return
+        loop = asyncio.get_running_loop()
+        import functools
+        try:
+            from services.veya_core.helpers import bluetooth as _bt
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, functools.partial(_bt.pair, mac)),
+                timeout=40.0,
+            )
+            ok = result.get("ok", False)
+            if ok:
+                self._bt_write_config(mac)
+                self._bt_start_bridge()
+            await ws.send(json.dumps({
+                "type":  "bt_pair_result",
+                "ok":    ok,
+                "error": result.get("error", ""),
+            }))
+            log.info("[ws] bt_pair mac=%r ok=%s", mac, ok)
+        except asyncio.TimeoutError:
+            log.warning("[ws] bt_pair timed out mac=%r", mac)
+            await self._ws_send_safe(ws, {"type": "bt_pair_result", "ok": False,
+                                          "error": "pair timed out"})
+        except Exception as exc:
+            log.error("[ws] bt_pair failed mac=%r: %s", mac, exc)
+            await self._ws_send_safe(ws, {"type": "bt_pair_result", "ok": False,
+                                          "error": str(exc)})
+
+    async def _handle_bt_unpair(self, ws: Any, mac: str) -> None:
+        if not mac:
+            await self._ws_send_safe(ws, {"type": "bt_unpair_result", "ok": False,
+                                          "error": "no MAC provided"})
+            return
+        loop = asyncio.get_running_loop()
+        import functools
+        try:
+            from services.veya_core.helpers import bluetooth as _bt
+            self._bt_stop_bridge()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, functools.partial(_bt.unpair, mac)),
+                timeout=15.0,
+            )
+            if result.get("ok", False):
+                self._bt_clear_config()
+            await ws.send(json.dumps({
+                "type":  "bt_unpair_result",
+                "ok":    result.get("ok", False),
+                "error": result.get("error", ""),
+            }))
+            log.info("[ws] bt_unpair mac=%r ok=%s", mac, result.get("ok"))
+        except asyncio.TimeoutError:
+            log.warning("[ws] bt_unpair timed out mac=%r", mac)
+            await self._ws_send_safe(ws, {"type": "bt_unpair_result", "ok": False,
+                                          "error": "unpair timed out"})
+        except Exception as exc:
+            log.error("[ws] bt_unpair failed mac=%r: %s", mac, exc)
+            await self._ws_send_safe(ws, {"type": "bt_unpair_result", "ok": False,
+                                          "error": str(exc)})
+
+    async def _handle_bt_disconnect(self, ws: Any) -> None:
+        self._bt_stop_bridge()
+        await self._ws_send_safe(ws, {"type": "bt_disconnect_result", "ok": True, "error": ""})
+        log.info("[ws] bt_disconnect — bridge stopped")
+
+    async def _handle_bt_bridge_status(self, ws: Any) -> None:
+        global _bt_bridge_proc
+        running = False
+        pid = 0
+        if _bt_bridge_proc is not None:
+            ret = _bt_bridge_proc.poll()
+            if ret is None:
+                running = True
+                pid = _bt_bridge_proc.pid
+            else:
+                _bt_bridge_proc = None
+
+        # "esp32_connected" is approximated: if the bridge is running we assume it's
+        # trying or connected — a future enhancement can parse the bridge log line.
+        await self._ws_send_safe(ws, {
+            "type":           "bt_bridge_status",
+            "running":        running,
+            "pid":            pid,
+            "esp32_connected": running,
+            "error":          "",
+        })
+        log.info("[ws] bt_bridge_status running=%s pid=%d", running, pid)
+
+    async def _handle_bt_pairing_mode(self, ws: Any, enabled: bool) -> None:
+        state = "on" if enabled else "off"
+        errors: list[str] = []
+        for subcmd in ("pairable", "discoverable"):
+            try:
+                res = subprocess.run(
+                    ["bluetoothctl", subcmd, state],
+                    capture_output=True, text=True, timeout=3,
+                )
+                if res.returncode != 0:
+                    errors.append(f"{subcmd}: {res.stderr.strip()}")
+            except subprocess.TimeoutExpired:
+                errors.append(f"{subcmd}: timed out")
+            except Exception as exc:
+                errors.append(f"{subcmd}: {exc}")
+        ok = not errors
+        await self._ws_send_safe(ws, {
+            "type":  "bt_pairing_mode_result",
+            "ok":    ok,
+            "error": "; ".join(errors),
+        })
+        log.info("[ws] bt_pairing_mode enabled=%s ok=%s", enabled, ok)
+
+    # ── BT config / bridge subprocess helpers ─────────────────────────────────
+
+    def _bt_write_config(self, mac: str) -> None:
+        import datetime
+        _BT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        existing: Dict[str, Any] = {}
+        if _BT_CONFIG_PATH.exists():
+            try:
+                existing = json.loads(_BT_CONFIG_PATH.read_text())
+            except Exception:
+                pass
+        existing["esp32_mac"]      = mac.upper()
+        existing["rfcomm_channel"] = existing.get("rfcomm_channel", 1)
+        existing["last_paired"]    = datetime.datetime.utcnow().isoformat() + "Z"
+        _BT_CONFIG_PATH.write_text(json.dumps(existing, indent=2))
+        log.info("[ws] bt_config written: mac=%s → %s", mac, _BT_CONFIG_PATH)
+
+    def _bt_clear_config(self) -> None:
+        if _BT_CONFIG_PATH.exists():
+            try:
+                cfg = json.loads(_BT_CONFIG_PATH.read_text())
+                cfg["esp32_mac"] = ""
+                _BT_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+                log.info("[ws] bt_config cleared")
+            except Exception as exc:
+                log.warning("[ws] bt_clear_config failed: %s", exc)
+
+    def _bt_start_bridge(self) -> None:
+        global _bt_bridge_proc
+        self._bt_stop_bridge()
+        log_path = pathlib.Path.home() / "veya" / "logs" / "bt_bridge.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path, "a")
+        try:
+            _bt_bridge_proc = subprocess.Popen(
+                [sys.executable, "-m", "services.veya_core.bt_bridge"],
+                stdout=log_fh,
+                stderr=log_fh,
+                start_new_session=True,
+            )
+            log.info("[ws] bt_bridge started pid=%d", _bt_bridge_proc.pid)
+        except Exception as exc:
+            log.error("[ws] bt_bridge start failed: %s", exc)
+            _bt_bridge_proc = None
+
+    def _bt_stop_bridge(self) -> None:
+        global _bt_bridge_proc
+        if _bt_bridge_proc is not None:
+            if _bt_bridge_proc.poll() is None:
+                try:
+                    _bt_bridge_proc.send_signal(signal.SIGTERM)
+                    _bt_bridge_proc.wait(timeout=3)
+                except Exception as exc:
+                    log.warning("[ws] bt_bridge stop: %s", exc)
+                    try:
+                        _bt_bridge_proc.kill()
+                    except Exception:
+                        pass
+                log.info("[ws] bt_bridge stopped")
+            _bt_bridge_proc = None
 
     # ── Utility ───────────────────────────────────────────────────────────────
 

@@ -25,9 +25,11 @@ qt_add_qml_module(veya_ui
         qml/LiveSessionScreen.qml
         qml/SettingsScreen.qml
         qml/WifiManager.qml
+        qml/BluetoothManager.qml
         qml/providers/VehicleDataProvider.qml
         qml/providers/UserProfile.qml
         qml/providers/WifiStatusProvider.qml
+        qml/providers/BluetoothStatusProvider.qml
         qml/components/GaugeRing.qml
         qml/components/StatusIconBar.qml
         qml/components/CarSilhouette.qml
