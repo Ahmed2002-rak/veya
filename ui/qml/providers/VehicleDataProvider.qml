@@ -73,6 +73,20 @@ Item {
     // ── Misc ────────────────────────────────────────────────────────────────
     property double lastTs: 0
 
+    // ── Stale data detection (Phase 3.0a) ───────────────────────────────────
+    // dataStale becomes true when 3 s pass with no telemetry frame in ELM mode.
+    // Drive.qml uses this to show the "Waiting for OBD-II device" banner.
+    property bool dataStale: false
+
+    readonly property bool noSourceConnected: dataMode === "elm" && dataStale
+
+    Timer {
+        id: staleTimer
+        interval: 3000
+        repeat: false
+        onTriggered: root.dataStale = true
+    }
+
     // ── Mode-switch state ───────────────────────────────────────────────────
     property bool   switching:      false
     property string lastModeError:  ""
@@ -188,6 +202,11 @@ Item {
 
             // ── Telemetry fields ───────────────────────────────────────────
             if (obj.ts            !== undefined) root.lastTs       = Number(obj.ts)
+            // Reset stale timer on any telemetry frame with real data fields
+            if (obj.rpm !== undefined || obj.speed_kph !== undefined) {
+                root.dataStale = false
+                staleTimer.restart()
+            }
             if (obj.rpm           !== undefined) root.rpm          = Number(obj.rpm)
             if (obj.speed_kph     !== undefined) root.speedKph     = Number(obj.speed_kph)
             if (obj.coolant_c     !== undefined) root.coolantC     = Number(obj.coolant_c)
@@ -200,11 +219,22 @@ Item {
             // ── Mode confirmation ──────────────────────────────────────────
             // obj.status is "mock" or "elm" — this drives the UI toggle and badge
             if (obj.status !== undefined) {
-                root.dataMode   = String(obj.status)   // "mock" | "elm"
-                root.lastStatus = String(obj.status)   // also keeps statusText correct
+                const newMode = String(obj.status)
+                root.dataMode   = newMode
+                root.lastStatus = newMode
+
+                // When switching to ELM, start the stale timer immediately;
+                // mock mode is never considered stale.
+                if (newMode === "elm") {
+                    root.dataStale = false
+                    staleTimer.restart()
+                } else {
+                    staleTimer.stop()
+                    root.dataStale = false
+                }
 
                 // Backend confirmed the requested mode → clear switching spinner
-                if (root.switching && root._requestedMode === String(obj.status)) {
+                if (root.switching && root._requestedMode === newMode) {
                     root.switching      = false
                     root._requestedMode = ""
                     switchTimeout.stop()

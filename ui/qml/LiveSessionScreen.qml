@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtWebSockets
 import Veya 1.0
 
 Page {
@@ -17,6 +18,31 @@ Page {
     readonly property color cCyan:   "#4DD2FF"
     readonly property color cText:   "white"
     readonly property color cWarn:   "#FF4D6D"
+
+    // ── Server config (Phase 3.0a) ───────────────────────────────────────
+    property string liveUrl: ""
+
+    readonly property string buttonTooltip: {
+        if (liveUrl.length === 0) return "Server not configured — run set_server_url.py live <url>"
+        return "Server unreachable — check network connection"
+    }
+
+    WebSocket {
+        id: liveConfigWs
+        url: "ws://127.0.0.1:8765"
+        active: true
+        onStatusChanged: {
+            if (status === WebSocket.Open)
+                liveConfigWs.sendTextMessage(JSON.stringify({ cmd: "load_server_config" }))
+        }
+        onTextMessageReceived: function(message) {
+            let obj
+            try { obj = JSON.parse(message) } catch(e) { return }
+            if (obj.type === "server_config") {
+                root.liveUrl = (obj.data && obj.data.live_session_url) ? obj.data.live_session_url : ""
+            }
+        }
+    }
 
     // ── Background ───────────────────────────────────────────────────────
     Rectangle {
@@ -275,7 +301,7 @@ Page {
             }
 
             ToolTip.visible: sessionDisabledHover.containsMouse
-            ToolTip.text: "Live session backend not configured yet (Phase 3)"
+            ToolTip.text: root.buttonTooltip
 
             MouseArea {
                 id: sessionDisabledHover

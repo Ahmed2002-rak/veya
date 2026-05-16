@@ -28,7 +28,13 @@ needs no changes:
     }
 
 Incoming UI commands:
-    {"cmd": "set_mode", "mode": "mock"|"elm"}
+    {"cmd": "set_mode",    "mode": "mock"|"elm"}
+    {"cmd": "wifi_scan"}
+    {"cmd": "wifi_status"}
+    {"cmd": "wifi_connect",    "ssid": "...", "password": "..."}
+    {"cmd": "wifi_disconnect"}
+    {"cmd": "load_server_config"}
+    {"cmd": "save_server_config", "data": {...}}
 
 Note: the new source-facing protocol (contract.py) is unrelated to this
 file. Translation happens in core.py.
@@ -171,6 +177,24 @@ class UiWebSocketServer:
                         await self._handle_save_profile(ws, data)
                 elif obj.get("cmd") == "load_profile":
                     await self._handle_load_profile(ws)
+                # ── Wi-Fi commands (Phase 3.0a) ───────────────────────────────
+                elif obj.get("cmd") == "wifi_scan":
+                    asyncio.create_task(self._handle_wifi_scan(ws))
+                elif obj.get("cmd") == "wifi_status":
+                    asyncio.create_task(self._handle_wifi_status(ws))
+                elif obj.get("cmd") == "wifi_connect":
+                    ssid     = obj.get("ssid", "")
+                    password = obj.get("password", "")
+                    asyncio.create_task(self._handle_wifi_connect(ws, ssid, password))
+                elif obj.get("cmd") == "wifi_disconnect":
+                    asyncio.create_task(self._handle_wifi_disconnect(ws))
+                # ── Server-URL config commands (Phase 3.0a) ───────────────────
+                elif obj.get("cmd") == "load_server_config":
+                    await self._handle_load_server_config(ws)
+                elif obj.get("cmd") == "save_server_config":
+                    data = obj.get("data", {})
+                    if isinstance(data, dict):
+                        await self._handle_save_server_config(ws, data)
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -213,3 +237,159 @@ class UiWebSocketServer:
                                           "error": str(exc)}))
             except Exception:
                 pass
+
+    # ── Wi-Fi commands (Phase 3.0a) ───────────────────────────────────────────
+    # Each runs wifi.py helper functions in a thread pool so subprocess calls
+    # don't block the asyncio event loop.
+
+    async def _handle_wifi_scan(self, ws: Any) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import wifi as _wifi
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _wifi.scan),
+                timeout=15.0,
+            )
+            networks = result.get("networks", [])
+            error    = result.get("error", "")
+            await ws.send(json.dumps({
+                "type": "wifi_scan_result",
+                "networks": networks,
+                "error": error,
+            }))
+            log.info("[ws] wifi_scan → %d networks", len(networks))
+        except asyncio.TimeoutError:
+            log.warning("[ws] wifi_scan timed out")
+            await self._ws_send_safe(ws, {"type": "wifi_scan_result", "networks": [],
+                                          "error": "scan timed out"})
+        except Exception as exc:
+            log.error("[ws] wifi_scan failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "wifi_scan_result", "networks": [],
+                                          "error": str(exc)})
+
+    async def _handle_wifi_status(self, ws: Any) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import wifi as _wifi
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _wifi.status),
+                timeout=5.0,
+            )
+            await ws.send(json.dumps({
+                "type":      "wifi_status",
+                "connected": result.get("connected", False),
+                "ssid":      result.get("ssid", ""),
+                "device":    result.get("device", "wlan0"),
+                "error":     result.get("error", ""),
+            }))
+            log.info("[ws] wifi_status → connected=%s ssid=%r",
+                     result.get("connected"), result.get("ssid"))
+        except asyncio.TimeoutError:
+            log.warning("[ws] wifi_status timed out")
+            await self._ws_send_safe(ws, {"type": "wifi_status", "connected": False,
+                                          "ssid": "", "device": "wlan0",
+                                          "error": "status timed out"})
+        except Exception as exc:
+            log.error("[ws] wifi_status failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "wifi_status", "connected": False,
+                                          "ssid": "", "device": "wlan0",
+                                          "error": str(exc)})
+
+    async def _handle_wifi_connect(self, ws: Any, ssid: str, password: str) -> None:
+        loop = asyncio.get_running_loop()
+        import functools
+        try:
+            from services.veya_core.helpers import wifi as _wifi
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, functools.partial(_wifi.connect, ssid, password)),
+                timeout=30.0,
+            )
+            await ws.send(json.dumps({
+                "type":  "wifi_connect_result",
+                "ok":    result.get("ok", False),
+                "error": result.get("error", ""),
+            }))
+            log.info("[ws] wifi_connect ssid=%r ok=%s", ssid, result.get("ok"))
+        except asyncio.TimeoutError:
+            log.warning("[ws] wifi_connect timed out ssid=%r", ssid)
+            await self._ws_send_safe(ws, {"type": "wifi_connect_result", "ok": False,
+                                          "error": "connection timed out"})
+        except Exception as exc:
+            log.error("[ws] wifi_connect failed ssid=%r: %s", ssid, exc)
+            await self._ws_send_safe(ws, {"type": "wifi_connect_result", "ok": False,
+                                          "error": str(exc)})
+
+    async def _handle_wifi_disconnect(self, ws: Any) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import wifi as _wifi
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _wifi.disconnect),
+                timeout=5.0,
+            )
+            await ws.send(json.dumps({
+                "type":  "wifi_disconnect_result",
+                "ok":    result.get("ok", False),
+                "error": result.get("error", ""),
+            }))
+            log.info("[ws] wifi_disconnect ok=%s", result.get("ok"))
+        except asyncio.TimeoutError:
+            log.warning("[ws] wifi_disconnect timed out")
+            await self._ws_send_safe(ws, {"type": "wifi_disconnect_result", "ok": False,
+                                          "error": "disconnect timed out"})
+        except Exception as exc:
+            log.error("[ws] wifi_disconnect failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "wifi_disconnect_result", "ok": False,
+                                          "error": str(exc)})
+
+    # ── Server URL config (Phase 3.0a) ────────────────────────────────────────
+
+    _SERVER_CONFIG_PATH = pathlib.Path.home() / ".veya" / "server_config.json"
+    _SERVER_CONFIG_DEFAULTS: Dict[str, Any] = {
+        "report_url":       "",
+        "live_session_url": "",
+        "last_updated":     "",
+    }
+
+    def _read_server_config(self) -> Dict[str, Any]:
+        cfg = dict(self._SERVER_CONFIG_DEFAULTS)
+        if self._SERVER_CONFIG_PATH.exists():
+            try:
+                stored = json.loads(self._SERVER_CONFIG_PATH.read_text())
+                cfg.update({k: stored[k] for k in self._SERVER_CONFIG_DEFAULTS if k in stored})
+            except Exception:
+                pass
+        return cfg
+
+    async def _handle_load_server_config(self, ws: Any) -> None:
+        try:
+            cfg = self._read_server_config()
+            await ws.send(json.dumps({"type": "server_config", "data": cfg}))
+            log.info("[ws] server_config loaded")
+        except Exception as exc:
+            log.error("[ws] load_server_config failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "server_config", "data": {},
+                                          "error": str(exc)})
+
+    async def _handle_save_server_config(self, ws: Any, data: Dict[str, Any]) -> None:
+        try:
+            cfg = self._read_server_config()
+            for k in self._SERVER_CONFIG_DEFAULTS:
+                if k in data:
+                    cfg[k] = data[k]
+            self._SERVER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self._SERVER_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+            await ws.send(json.dumps({"type": "server_config_saved", "ok": True}))
+            log.info("[ws] server_config saved → %s", self._SERVER_CONFIG_PATH)
+        except Exception as exc:
+            log.error("[ws] save_server_config failed: %s", exc)
+            await self._ws_send_safe(ws, {"type": "server_config_saved", "ok": False,
+                                          "error": str(exc)})
+
+    # ── Utility ───────────────────────────────────────────────────────────────
+
+    async def _ws_send_safe(self, ws: Any, obj: Dict[str, Any]) -> None:
+        try:
+            await ws.send(json.dumps(obj))
+        except Exception:
+            pass
