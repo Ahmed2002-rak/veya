@@ -107,7 +107,7 @@ fi
 
 # ── Launch Qt UI ─────────────────────────────────────────────────────
 echo "[start_veya] Launching veya_ui …"
-"$VEYA_HOME/ui/build/veya_ui" >> "$VEYA_HOME/logs/veya_ui.log" 2>&1
+QML_XHR_ALLOW_FILE_READ=1 "$VEYA_HOME/ui/build/veya_ui" >> "$VEYA_HOME/logs/veya_ui.log" 2>&1
 UI_CODE=$?
 echo "[start_veya] veya_ui exited with code=$UI_CODE"
 

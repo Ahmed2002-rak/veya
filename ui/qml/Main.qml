@@ -69,6 +69,82 @@ ApplicationWindow {
         anchors.fill: parent
 
         // IMPORTANT: pass nav reference explicitly
-        initialItem: Home { nav: stack }
+        initialItem: SplashScreen { nav: stack }
+    }
+
+    // ── Splash / routing page (inline) ───────────────────────────────────
+    // Shown for ≤ 1 s while UserProfile loads from disk, then replaced
+    // by either WelcomeOnboarding (first launch) or Home (returning user).
+    component SplashScreen: Item {
+        property var nav: null
+
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+        }
+
+        // Centered loading indicator
+        Column {
+            anchors.centerIn: parent
+            spacing: 16
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "VEYA"
+                color: "#4DD2FF"
+                font.pixelSize: 48; font.bold: true
+                font.letterSpacing: 10; font.family: "DejaVu Sans"
+            }
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: UserProfile.loading ? "Loading…" : ""
+                color: Qt.rgba(1,1,1,0.40)
+                font.pixelSize: 14; font.family: "DejaVu Sans"
+            }
+        }
+
+        // Route once UserProfile finishes loading
+        Connections {
+            target: UserProfile
+            function onLoadingChanged() {
+                if (UserProfile.loading) return
+                Qt.callLater(function() {
+                    if (UserProfile.profileExists) {
+                        nav.replace(null, Qt.resolvedUrl("Home.qml"), { nav: nav })
+                    } else {
+                        nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
+                    }
+                })
+            }
+        }
+
+        // Safety net: if profile was already loaded synchronously before
+        // Connections was ready, route immediately on component completion.
+        Component.onCompleted: {
+            if (!UserProfile.loading) {
+                Qt.callLater(function() {
+                    if (UserProfile.profileExists) {
+                        nav.replace(null, Qt.resolvedUrl("Home.qml"), { nav: nav })
+                    } else {
+                        nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
+                    }
+                })
+            }
+        }
+
+        // Hard timeout: if UserProfile.loading is still true after 5 s,
+        // force-route to onboarding so a future bug never hangs the boot.
+        Timer {
+            interval: 5000
+            running: true
+            repeat: false
+            onTriggered: {
+                if (UserProfile.loading) {
+                    console.warn("[Main] UserProfile load timeout — forcing onboarding")
+                    nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
+                }
+            }
+        }
     }
 }

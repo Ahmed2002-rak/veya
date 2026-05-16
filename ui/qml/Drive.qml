@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Effects
 import Veya 1.0
 
 Page {
@@ -166,6 +167,42 @@ Page {
             }
 
             Item { Layout.fillWidth: true; Layout.preferredHeight: 1 }
+
+            // Settings icon
+            Item {
+                Layout.preferredWidth: 36
+                Layout.preferredHeight: 36
+                Layout.alignment: Qt.AlignVCenter
+                Image {
+                    id: driveSettingsIcon
+                    anchors.fill: parent
+                    source: "assets/icon_settings.svg"
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize: Qt.size(72, 72)
+                    smooth: true
+                    visible: false
+                }
+                MultiEffect {
+                    source: driveSettingsIcon
+                    anchors.fill: driveSettingsIcon
+                    colorization: 1.0
+                    colorizationColor: root.cCyan
+                    opacity: settingsMouse.containsMouse ? 1.0 : 0.70
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                }
+                scale: settingsMouse.pressed ? 0.90 : (settingsMouse.containsMouse ? 1.1 : 1.0)
+                Behavior on scale { NumberAnimation { duration: 150 } }
+                MouseArea {
+                    id: settingsMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (root.nav)
+                            root.nav.push(Qt.resolvedUrl("SettingsScreen.qml"), { nav: root.nav })
+                    }
+                }
+            }
 
             // RIGHT: connection/mode badge + DemoBadge (capped at 30% root.width)
             ColumnLayout {
