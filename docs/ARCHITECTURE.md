@@ -1,6 +1,6 @@
 # VEYA — System Architecture
 
-> **Status:** Phase 2.0 (March 2026)
+> **Status:** Phase 3.0c (May 2026)
 > **Audience:** anyone touching the Python or QML stack
 > **Companion docs:** [`CONTRACT.md`](./CONTRACT.md) (wire protocol), [`MEMORY.md`](./MEMORY.md) (project state & decisions), [`../CLAUDE.md`](../CLAUDE.md) (Claude Code instructions)
 
@@ -8,7 +8,7 @@
 
 ## 1. The big picture
 
-VEYA splits cleanly into **three processes** that talk over **two well-defined wires**:
+VEYA splits cleanly into **three processes plus an optional Bluetooth bridge process (`bt_bridge.py`) when an ESP32 source is paired** that talk over **two well-defined wires**:
 
 ```
 ┌──────────────────────────┐                          ┌──────────────────────────┐
@@ -42,13 +42,14 @@ VEYA splits cleanly into **three processes** that talk over **two well-defined w
 
 **The two wires.** §4 of [`CONTRACT.md`](./CONTRACT.md) defines the **source ↔ core** TCP protocol; the **core ↔ UI** WebSocket protocol is the legacy one that `VehicleDataProvider.qml` already consumes (described in `CLAUDE.md`).
 
-**The three processes.** Each can be started, stopped, and tested independently:
+**The processes.** Each can be started, stopped, and tested independently:
 
 | Process | Module | Role |
 | --- | --- | --- |
 | Source | `services.veya_core.sources.mock_source` (or any other source) | produces telemetry |
 | Core | `services.veya_core.core` | translates, caches, broadcasts |
 | UI | `ui/build/veya_ui` | renders |
+| BT Bridge (optional) | `services.veya_core.bt_bridge` | relays ESP32 RFCOMM frames to TCP :9000; spawned by ws_server.py on successful pair |
 
 ---
 
@@ -148,7 +149,7 @@ Three implementation details worth knowing:
 
 Each source is a **standalone TCP-client script** importing only `services.veya_core.contract`. They share no state with the core process.
 
-**Bluetooth-SPP source lifecycle:** The ESP32 boots and waits for an RFCOMM client. The user taps Pair in BluetoothManager → `ws_server.py` calls `bluetoothctl pair` then spawns `bt_bridge.py` as a detached subprocess. `bt_bridge.py` opens an RFCOMM socket to the ESP32's MAC, then connects to the core TCP listener at :9000 and forwards bytes bidirectionally. From the core's perspective, `bt_bridge.py` is just another TCP source speaking the wire contract.
+**Bluetooth-SPP source lifecycle:** The ESP32 boots and waits for an RFCOMM client. The user taps Pair in BluetoothManager → `ws_server.py` calls `bluetoothctl pair` then spawns `bt_bridge.py` as a detached subprocess. `bt_bridge.py` opens an RFCOMM socket to the ESP32's MAC, then connects to the core TCP listener at :9000 and forwards bytes bidirectionally. From the core's perspective, `bt_bridge.py` is just another TCP source speaking the wire contract. After a successful pair, `ws_server.py` spawns `bt_bridge.py` as a detached subprocess via `subprocess.Popen`. The bridge writes `/tmp/veya_bt_bridge_status.txt` as a heartbeat so `ws_server` can report bridge state to the UI.
 
 | Source | Spawned by | Purpose |
 | --- | --- | --- |
@@ -259,22 +260,29 @@ The contract between layers here is that **the UI never blocks waiting for a har
 
 ---
 
-## 6. What is NOT in Phase 2.0
+## 6. What is NOT in v3.0c-stable
 
-These are deliberately deferred so this phase stays mechanical:
+These are deliberately deferred:
 
-- **No SQLite session DB.** Planned for Phase 2.1.
-- **No real DTC pipe to the Diagnostic page.** Phase 2.2.
-- **No multi-source aggregation.** May never happen — single source is the design.
-- **No remote analytics server.** Out of scope for the embedded prototype.
-- **No ESP32 firmware.** Phase 2.3 / Ingéniorat-stream hardware work.
-- **No security layer on the TCP port.** Localhost by default; LAN deployments rely on network isolation.
+- **No real OBD-II reading on the ESP32.** The reference sketch (`firmware/esp32/veya_esp32_sample.ino`) sends hardcoded telemetry values. Actual CAN/ISO 9141 reading is Phase 3.1 — Ingéniorat hardware track.
+- **No server integration.** Get Report POST and Live Session WebSocket to the remote server are not implemented (Phase 3.2). The server URL is configurable and stored, but the HTTP/WS calls are placeholders.
+- **No SQLite session logging.** Planned for Phase 3.4.
+- **No DTC display on the Diagnostic page UI.** The `dtc` wire frame is defined in `contract.py` and the Diagnostic.qml placeholder exists, but they are not connected (Phase 3.5).
+- **No multi-source aggregation.** Intentional — see `CONTRACT.md` §3.3.
+- **No security layer on TCP :9000.** Localhost-only by default; LAN deployments rely on network isolation.
 
-Phase 2.0 ends when:
-1. `python -m services.veya_core.core` boots and serves the UI exactly as the legacy `obd_service.py` did.
-2. `mock_source.py` and `elm327_source.py` run as standalone scripts.
-3. The kiosk path (`start_veya.sh`) works unchanged from the user's POV.
-4. The three docs (this file, `CONTRACT.md`, `MEMORY.md`) exist and are accurate.
+---
+
+## 7. Recent additions through v3.0c
+
+A condensed history of what each post-2.0 phase added, for contributors joining mid-project.
+
+- **Phase 2.1:** 1024×600 visual fixes, warning telltales, animated road silhouette, RPM label cleanup, Qt6Svg linked.
+- **Phase 2.2a:** User-facing Diagnostic page redesign, hidden DevDiagnostic developer gesture, Report and LiveSession placeholder screens, repo hygiene pass.
+- **Phase 2.2b:** WS-backed UserProfile save/load, first-launch onboarding flow, custom QML on-screen keyboard, Settings/Wi-Fi/Diagnostic placeholder pages scaffolded.
+- **Phase 3.0a:** Wi-Fi backend via WS commands (`wifi_scan`, `wifi_status`, `wifi_connect`, `wifi_disconnect`), Home Wi-Fi indicator, server URL config helper (`set_server_url.py`), no-source banner on Drive.
+- **Phase 3.0b:** Bluetooth bridge (`bt_bridge.py`), BT manager UI (`bt_scan`, `bt_status`, `bt_pair`, `bt_unpair`, `bt_bridge_status`, `bt_pairing_mode` WS commands), `bt-agent` systemd service, `setup_bluetooth.sh` first-run script, three-state banner on Drive, BT indicator on Home.
+- **Phase 3.0c:** ESP32 reference firmware with Class-of-Device fix for modern bluez, Python stdlib `AF_BLUETOOTH` / `BTPROTO_RFCOMM` socket in `bt_bridge` (replacing dead pybluez), pair sequencing with `bluetoothctl` + `hcitool` fallback for BR/EDR inquiry, end-to-end pipeline verified on real hardware.
 
 ---
 
