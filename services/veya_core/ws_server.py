@@ -79,7 +79,8 @@ UI_BROADCAST_HARD_HZ = 20.0
 _UI_MIN_PERIOD = 1.0 / UI_BROADCAST_HARD_HZ
 
 # BT bridge config and subprocess state (module-level so all handler calls share it)
-_BT_CONFIG_PATH = pathlib.Path.home() / ".veya" / "bt_config.json"
+_BT_CONFIG_PATH  = pathlib.Path.home() / ".veya" / "bt_config.json"
+_BT_STATUS_FILE  = pathlib.Path("/tmp/veya_bt_bridge_status.txt")
 _bt_bridge_proc: Optional[subprocess.Popen] = None  # live bridge process
 
 
@@ -485,15 +486,18 @@ class UiWebSocketServer:
                 timeout=40.0,
             )
             ok = result.get("ok", False)
+            bridge_started = False
             if ok:
                 self._bt_write_config(mac)
                 self._bt_start_bridge()
+                bridge_started = (_bt_bridge_proc is not None and _bt_bridge_proc.poll() is None)
             await ws.send(json.dumps({
-                "type":  "bt_pair_result",
-                "ok":    ok,
-                "error": result.get("error", ""),
+                "type":           "bt_pair_result",
+                "ok":             ok,
+                "bridge_started": bridge_started,
+                "error":          result.get("error", ""),
             }))
-            log.info("[ws] bt_pair mac=%r ok=%s", mac, ok)
+            log.info("[ws] bt_pair mac=%r ok=%s bridge_started=%s", mac, ok, bridge_started)
         except asyncio.TimeoutError:
             log.warning("[ws] bt_pair timed out mac=%r", mac)
             await self._ws_send_safe(ws, {"type": "bt_pair_result", "ok": False,
@@ -551,16 +555,16 @@ class UiWebSocketServer:
             else:
                 _bt_bridge_proc = None
 
-        # "esp32_connected" is approximated: if the bridge is running we assume it's
-        # trying or connected — a future enhancement can parse the bridge log line.
+        esp32_connected = self._bt_read_esp32_connected()
         await self._ws_send_safe(ws, {
-            "type":           "bt_bridge_status",
-            "running":        running,
-            "pid":            pid,
-            "esp32_connected": running,
-            "error":          "",
+            "type":            "bt_bridge_status",
+            "running":         running,
+            "pid":             pid,
+            "esp32_connected": esp32_connected,
+            "error":           "",
         })
-        log.info("[ws] bt_bridge_status running=%s pid=%d", running, pid)
+        log.info("[ws] bt_bridge_status running=%s pid=%d esp32_connected=%s",
+                 running, pid, esp32_connected)
 
     async def _handle_bt_pairing_mode(self, ws: Any, enabled: bool) -> None:
         state = "on" if enabled else "off"
@@ -586,6 +590,20 @@ class UiWebSocketServer:
         log.info("[ws] bt_pairing_mode enabled=%s ok=%s", enabled, ok)
 
     # ── BT config / bridge subprocess helpers ─────────────────────────────────
+
+    def _bt_read_esp32_connected(self) -> bool:
+        """Return True if the status file exists, contains 'connected', and was
+        touched within the last 5 seconds (bridge is actively forwarding data)."""
+        try:
+            if not _BT_STATUS_FILE.exists():
+                return False
+            content = _BT_STATUS_FILE.read_text().strip()
+            if content != "connected":
+                return False
+            mtime = _BT_STATUS_FILE.stat().st_mtime
+            return (time.time() - mtime) <= 5.0
+        except Exception:
+            return False
 
     def _bt_write_config(self, mac: str) -> None:
         import datetime

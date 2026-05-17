@@ -306,4 +306,41 @@ The full firmware will need to *also* read commands from `tcp` and react to `set
 
 ---
 
+## Bluetooth Transport
+
+### Protocol
+- Bluetooth-Classic SPP (Serial Port Profile) via RFCOMM
+- Default RFCOMM channel: 1
+- The ESP32 advertises a BT-Classic name (prefix "VEYA-OBD-" recommended for easy filtering in BluetoothManager scans, but any name works)
+
+### Pairing Flow
+1. ESP32 starts in pairable/discoverable mode (Arduino BluetoothSerial does this by default)
+2. Pi's BluetoothManager UI: user taps Refresh → ESP32 appears in Available Devices
+3. User taps Pair → ws_server invokes `bluetooth.pair` (bluetoothctl pair + trust + connect)
+4. On successful pair → ws_server writes MAC to `~/.veya/bt_config.json`
+5. ws_server spawns `bt_bridge.py` as a detached subprocess
+6. `bt_bridge.py` opens RFCOMM socket to ESP32 MAC, channel 1
+7. ESP32 sends hello frame upon receiving SPP client → bridge forwards to TCP :9000
+8. ESP32 sends telemetry frames at its own rate → bridge forwards each as a line-delimited JSON frame
+
+### Required ESP32 Behaviour
+- Send EXACTLY ONE hello frame within 500 ms of detecting a connected SPP client:
+  `{"schema":1,"type":"hello","source_id":"<id>","source_kind":"veya-esp32","firmware":"<version>"}`
+- Then send telemetry frames at any rate up to 20 Hz, using the telemetry schema defined in §4.2.
+- All frames are line-delimited JSON — newline terminator required.
+- If the SPP client disconnects, return to listening mode. Re-send hello on next connect.
+
+### Pi-side Components
+| Component | Role |
+| --- | --- |
+| `services/veya_core/helpers/bluetooth.py` | scan, pair, unpair via bluetoothctl |
+| `services/veya_core/bt_bridge.py` | opens RFCOMM socket, forwards frames to TCP :9000 |
+| `services/veya_core/ws_server.py` | handles bt_pair WS command; spawns bt_bridge on success |
+
+### Reference Implementation
+See `firmware/esp32/veya_esp32_sample.ino` — a minimal sketch that proves the pipeline end-to-end.
+Replace with real OBD-reading code by hooking into `setup()` / `loop()` as commented in the sketch.
+
+---
+
 *End of CONTRACT.md*

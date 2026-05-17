@@ -63,52 +63,46 @@ def scan(duration: int = 8) -> dict:
     Returns {"devices": [...], "error": ""}
     Each device: {"mac": "AA:BB:...", "name": "...", "paired": bool, "connected": bool}
     """
-    # 1. Enable scan for `duration` seconds using bluetoothctl with a timeout
-    scan_timeout = duration + 3
-    _, scan_out, scan_err = _btctl(
-        "scan on",
-        f"sleep {duration}",
-        "scan off",
-        "devices",
-        "quit",
-        timeout=scan_timeout + 5,
-    )
+    # Use hcitool scan for raw BR/EDR inquiry. bluetoothctl filters scan output by
+    # perceived device type / service profile, silently dropping BT-Classic SPP devices
+    # (e.g. ESP32 BluetoothSerial) that don't advertise bluez-recognized service UUIDs.
+    # hcitool bypasses that filtering and finds all responding devices.
+    # NOTE: hcitool is deprecated in newer BlueZ but is the only practical BR/EDR
+    # discovery path short of raw HCI socket programming, which we avoid for simplicity.
+    # If BlueZ gains a reliable non-filtered BR/EDR inquiry API, revisit.
+    length = max(4, int(duration * 1.25))  # --length units are 1.28 s; *1.25 ≈ wall-clock match
+    # Total wall time = (length * 1.28 s inquiry) + ~5-8 s for remote name requests per device.
+    # Empirically: --length=8 → ~15 s, --length=10 → ~19 s. Add 8 s buffer; floor at 20 s.
+    scan_timeout = max(20, int(length * 1.28) + 8)
 
-    # If that hung, fall back to hcitool scan (classic inquiry)
-    if not scan_out.strip():
-        rc, out, err = _run(["hcitool", "scan", "--length", str(duration // 2 or 4)],
-                            timeout=duration + 10)
-        if rc != 0:
-            return {"devices": [], "error": err.strip() or "scan failed"}
-        devices = []
-        for line in out.splitlines():
-            line = line.strip()
-            if not line or line.startswith("Scanning"):
-                continue
-            parts = line.split(None, 1)
-            if len(parts) == 2:
-                mac, name = parts
-                devices.append({"mac": mac.upper(), "name": name, "paired": False, "connected": False})
-        return {"devices": devices, "error": ""}
+    # hcitool requires CAP_NET_ADMIN. Try direct first; fall back to sudo if denied.
+    rc, out, err = _run(["hcitool", "scan", "--length", str(length)], timeout=scan_timeout)
+    if rc != 0:
+        rc, out, err = _run(["sudo", "hcitool", "scan", "--length", str(length)],
+                            timeout=scan_timeout)
+    if rc != 0:
+        return {"devices": [], "error": err.strip() or "hcitool scan failed"}
 
-    # Parse bluetoothctl "devices" output to get discovered MACs/names
+    # Parse hcitool output:
+    #   Scanning ...
+    #           04:BD:BF:9B:8C:C5       Galaxy A71
+    #           78:1C:3C:F5:E7:2A       VEYA-OBD-SAMPLE
     devices: list[dict] = []
     seen: set[str] = set()
-    for line in scan_out.splitlines():
-        # Lines like: "Device AA:BB:CC:DD:EE:FF Device Name"
-        if "Device " in line:
-            parts = line.strip().split()
-            try:
-                idx = parts.index("Device")
-                mac = parts[idx + 1].upper()
-                name = " ".join(parts[idx + 2:]) if len(parts) > idx + 2 else ""
-            except (ValueError, IndexError):
-                continue
-            if len(mac) == 17 and mac not in seen:
-                seen.add(mac)
-                devices.append({"mac": mac, "name": name, "paired": False, "connected": False})
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Scanning"):
+            continue
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        mac = parts[0].upper()
+        name = parts[1] if len(parts) == 2 else ""
+        if len(mac) == 17 and mac not in seen:
+            seen.add(mac)
+            devices.append({"mac": mac, "name": name, "paired": False, "connected": False})
 
-    # Enrich with paired/connected status
+    # Enrich with paired/connected status via bluetoothctl (reliable for known-paired devices)
     st = status()
     paired_macs = {d.get("mac", "").upper() for d in st.get("paired", [])}
     connected_macs = {d.get("mac", "").upper() for d in st.get("connected", [])}
@@ -165,34 +159,77 @@ def pair(mac: str) -> dict:
     Returns {"ok": bool, "error": ""}
     """
     mac = mac.upper()
-    # We need to run pair/trust/connect sequentially with appropriate timeouts.
-    # Use NoInputNoOutput agent to skip PIN confirmation for devices that support SSP.
-    _, pair_out, pair_err = _btctl(
-        "agent NoInputNoOutput",
-        "default-agent",
-        f"pair {mac}",
-        "quit",
-        timeout=30,
-    )
-    combined = (pair_out + pair_err).lower()
-    if "failed" in combined or "error" in combined:
-        # Check if it was already paired
-        if "already exists" not in combined:
-            return {"ok": False, "error": pair_out.strip() or pair_err.strip()}
 
-    # Trust the device so it auto-connects later
-    _, trust_out, trust_err = _btctl(f"trust {mac}", "quit", timeout=10)
-    trust_combined = (trust_out + trust_err).lower()
-    if "failed" in trust_combined:
-        return {"ok": False, "error": trust_out.strip() or trust_err.strip()}
+    # bt-agent systemd service handles NoInputNoOutput globally; registering a duplicate
+    # agent here conflicts and causes "Failed to register agent object" / "No agent is
+    # registered" errors that break the whole pair flow — so omit agent commands entirely.
+    #
+    # bluez's device cache must be populated before `pair <mac>` will work; without a
+    # prior scan inside bluetoothctl, it returns "Device not available" even when the
+    # remote is discoverable.  Run a 5-second classic scan first, then pair/trust/connect
+    # all in the same session (one Popen so the cache persists across commands).
+    try:
+        # --agent NoInputNoOutput makes bluetoothctl's built-in agent auto-accept
+        # Numeric Comparison (SSP passkey) prompts without human interaction.
+        proc = subprocess.Popen(
+            ["bluetoothctl", "--agent", "NoInputNoOutput"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "bluetoothctl not found"}
 
-    # Connect
-    _, conn_out, conn_err = _btctl(f"connect {mac}", "quit", timeout=20)
-    conn_combined = (conn_out + conn_err).lower()
-    if "failed" in conn_combined and "already connected" not in conn_combined:
-        # Connection might still succeed if SPP is busy — treat as partial success
-        # because pairing itself worked
-        return {"ok": True, "error": conn_err.strip() or "paired but connect failed"}
+    try:
+        proc.stdin.write("power on\n")
+        proc.stdin.write("scan bredr\n")  # BR/EDR inquiry; default "scan on" is LE-only
+        proc.stdin.flush()
+        time.sleep(8)  # BR/EDR inquiry is slower than LE; 8 s is reliable
+        proc.stdin.write(f"pair {mac}\n")
+        proc.stdin.flush()
+        time.sleep(6)  # wait for pair handshake (NoInputNoOutput is fast, but give margin)
+        proc.stdin.write(f"trust {mac}\n")
+        proc.stdin.write(f"connect {mac}\n")
+        proc.stdin.write("quit\n")
+        # Do NOT close stdin here — communicate() flushes and closes it;
+        # manually closing first causes ValueError on Python 3.13.
+    except BrokenPipeError:
+        pass  # bluetoothctl exited early; fall through to collect output
+
+    try:
+        out, err = proc.communicate(timeout=45)  # 8s scan + 6s pair + trust + connect
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        return {"ok": False, "error": "pairing timed out"}
+
+    combined = out + err
+    combined_lower = combined.lower()
+
+    # Success indicators (check before any failure scan)
+    if "pairing successful" in combined_lower:
+        return {"ok": True, "error": ""}
+    if "connection successful" in combined_lower:
+        return {"ok": True, "error": ""}
+    if "already exists" in combined_lower or "alreadyexists" in combined_lower:
+        return {"ok": True, "error": ""}
+
+    # Device disappeared during pairing
+    if f"device {mac.lower()} not available" in combined_lower:
+        return {"ok": False, "error": "Device went out of range during pairing"}
+
+    # Explicit pair-failure line from bluetoothctl
+    for line in combined.splitlines():
+        if "Failed to pair" in line:
+            return {"ok": False, "error": line.strip()}
+
+    # Generic fallback — surface the first suspicious line
+    if "failed" in combined_lower or "not available" in combined_lower:
+        for line in combined.splitlines():
+            if "failed" in line.lower() or "not available" in line.lower():
+                return {"ok": False, "error": line.strip()}
+        return {"ok": False, "error": "pairing failed"}
 
     return {"ok": True, "error": ""}
 
