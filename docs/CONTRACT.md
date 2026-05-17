@@ -315,13 +315,14 @@ The full firmware will need to *also* read commands from `tcp` and react to `set
 
 ### Pairing Flow
 1. ESP32 starts in pairable/discoverable mode (Arduino BluetoothSerial does this by default)
-2. Pi's BluetoothManager UI: user taps Refresh → ESP32 appears in Available Devices
-3. User taps Pair → ws_server invokes `bluetooth.pair` (bluetoothctl pair + trust + connect)
-4. On successful pair → ws_server writes MAC to `~/.veya/bt_config.json`
-5. ws_server spawns `bt_bridge.py` as a detached subprocess
-6. `bt_bridge.py` opens RFCOMM socket to ESP32 MAC, channel 1
-7. ESP32 sends hello frame upon receiving SPP client → bridge forwards to TCP :9000
-8. ESP32 sends telemetry frames at its own rate → bridge forwards each as a line-delimited JSON frame
+2. The Pi requires `bt-agent --capability=NoInputNoOutput` running as a systemd service (see `scripts/setup_bluetooth.sh`). Without it, bluez refuses pairing requests because there is no D-Bus agent to confirm them.
+3. Pi's BluetoothManager UI: user taps Refresh → `helpers/bluetooth.py` runs `hcitool scan` for a raw BR/EDR inquiry (bluez filtered scan misses BT-Classic devices) → ESP32 appears in Available Devices
+4. User taps Pair → ws_server invokes `bluetooth.pair` (bluetoothctl pair + trust + connect, with scan_bredr mode enabled during the pair window)
+5. On successful pair → ws_server writes MAC to `~/.veya/bt_config.json`
+6. ws_server spawns `bt_bridge.py` as a detached subprocess via `subprocess.Popen`
+7. `bt_bridge.py` opens RFCOMM socket to ESP32 MAC, channel 1; writes `/tmp/veya_bt_bridge_status.txt` as a heartbeat
+8. ESP32 sends hello frame upon receiving SPP client → bridge forwards to TCP :9000
+9. ESP32 sends telemetry frames at its own rate → bridge forwards each as a line-delimited JSON frame
 
 ### Required ESP32 Behaviour
 - Send EXACTLY ONE hello frame within 500 ms of detecting a connected SPP client:
@@ -331,15 +332,43 @@ The full firmware will need to *also* read commands from `tcp` and react to `set
 - If the SPP client disconnects, return to listening mode. Re-send hello on next connect.
 
 ### Pi-side Components
+
 | Component | Role |
 | --- | --- |
-| `services/veya_core/helpers/bluetooth.py` | scan, pair, unpair via bluetoothctl |
-| `services/veya_core/bt_bridge.py` | opens RFCOMM socket, forwards frames to TCP :9000 |
-| `services/veya_core/ws_server.py` | handles bt_pair WS command; spawns bt_bridge on success |
+| `services/veya_core/helpers/bluetooth.py` | scan (via `hcitool scan` for BR/EDR inquiry), pair (via `bluetoothctl` with `scan_bredr` + scan-during-pair), unpair, `is_device_in_range` |
+| `services/veya_core/bt_bridge.py` | opens RFCOMM socket using Python stdlib `AF_BLUETOOTH` + `BTPROTO_RFCOMM` (no pybluez), forwards bytes bidirectionally to TCP :9000, writes status heartbeat to `/tmp/veya_bt_bridge_status.txt` |
+| `services/veya_core/ws_server.py` | WS command handlers for `bt_scan`, `bt_status`, `bt_pair`, `bt_unpair`, `bt_disconnect`, `bt_bridge_status`, `bt_pairing_mode`; spawns `bt_bridge` after successful pair; writes `~/.veya/bt_config.json` |
+| `scripts/setup_bluetooth.sh` | First-time Pi setup: installs `bluez` + `bluez-tools`, registers `bt-agent` systemd service, adds `pfe` user to `bluetooth` group |
 
 ### Reference Implementation
 See `firmware/esp32/veya_esp32_sample.ino` — a minimal sketch that proves the pipeline end-to-end.
 Replace with real OBD-reading code by hooking into `setup()` / `loop()` as commented in the sketch.
+
+---
+
+## Pi ↔ Server Transport
+
+**RESERVED — Phase 3.2. This contract is not yet implemented.**
+
+The Pi ↔ Server protocol will define:
+
+- **Get Report:** POST to `<server_url>/report` with session data; expects a diagnostic report response.
+- **Live Session:** WebSocket to `<server_url>/live-session` for real-time expert connection.
+- Authentication mechanism (token-based, TBD).
+- What payload structure the server expects.
+- What response structure the Pi expects.
+
+For now, server URLs are configurable via `python3 services/veya_core/helpers/set_server_url.py report <url>` and live in `~/.veya/server_config.json`. The dashboard's `ReportScreen` and `LiveSessionScreen` read this config but the actual POST/WS calls are not yet implemented.
+
+When this section is filled in, it will follow the same pattern as the Bluetooth Transport section above: protocol description, frame formats, lifecycle.
+
+---
+
+## Recent additions
+
+- **Phase 3.0c** added the Bluetooth Transport section above. The wire frame format (line-delimited JSON, schema `1`) is unchanged — only the physical transport from source to core changed (BT-Classic SPP relayed by `bt_bridge.py` instead of direct TCP).
+- **No new frame types** have been added to the source-facing contract since Phase 2.0. The 8 frame types in §4 remain canonical.
+- The Pi ↔ UI WebSocket layer added several new command verbs (`save_profile`, `load_profile`, `wifi_*`, `bt_*`, `bt_pairing_mode`) but these are orthogonal to the source contract — they live on the UI WS layer, not the source TCP layer.
 
 ---
 

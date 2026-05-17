@@ -2,7 +2,7 @@
 
 > **Audience:** future-you, future contributors, AI assistants resuming a session
 > **Read alongside:** [`CONTRACT.md`](./CONTRACT.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`../CLAUDE.md`](../CLAUDE.md)
-> **Last updated:** May 2026 (after Phase 2.0 architecture refactor)
+> **Last updated:** May 2026 (after Phase 3.0c — ESP32 BT pipeline verified end-to-end)
 
 This file is the place for things that are *not* derivable from the code: decisions, conventions, reasons, and traps. If something is mechanically obvious from `git log` or from reading a file, it does not belong here.
 
@@ -10,22 +10,28 @@ This file is the place for things that are *not* derivable from the code: decisi
 
 ## 1. Project state — at a glance
 
-**Where we are:** end of Phase 2.0. The architectural refactor split the monolithic `obd_service.py` into a `core + sources` layout connected by a TCP wire contract. UI is unchanged.
+**Where we are:** v3.0c-stable on main. End-to-end pipeline (ESP32 → BT-SPP → bt_bridge → core → UI) verified on real hardware with the reference firmware.
 
 **What works today:**
-- Kiosk boot through `start_veya.sh` — same as Phase 1, no user-visible change.
+- Kiosk boot through `start_veya.sh` — RPi5 auto-starts on login via `~/.bash_profile`.
 - `python -m services.veya_core.core --mode mock` boots a self-contained mock dashboard.
 - `python -m services.veya_core.core --mode real` listens on TCP :9000; running `elm327_source.py` (or any compliant source) feeds the UI.
 - Live mode switching from the Home toggle, with instant status confirmation and a 3 s timeout when no real source materialises.
 - All Phase 1 telemetry fields, warnings, and the dual-channel UX (TEST badge / REAL badge) preserved.
+- Bluetooth pairing via dashboard UI (`BluetoothManager.qml`): scan, pair, unpair, bridge-status.
+- `bt_bridge.py` opens an RFCOMM socket to the paired ESP32 and forwards frames to TCP :9000.
+- Wi-Fi management via dashboard UI (`WifiManager.qml`): scan, connect, disconnect, status.
+- First-launch onboarding flow with custom QML on-screen keyboard.
+- Reference ESP32 sketch at `firmware/esp32/veya_esp32_sample.ino` — BT-Classic SPP, hardcoded telemetry values.
+- Settings → Wi-Fi and Settings → Bluetooth status indicators on the Home screen.
+- Three-state banner on Drive: waiting-for-source / no-telemetry / streaming.
+- Server URL configurable via `python3 services/veya_core/helpers/set_server_url.py`.
 
 **What does not work yet:**
-- Diagnostic page DTC display (the wire is there — `dtc` frame in the contract — but the Diagnostic.qml UI is still a placeholder).
-- SQLite session logging.
-- Any non-`mock`/`elm327` source — the ESP32 firmware does not exist yet.
-- `pip install obd` is required for `--mode real` to actually pull data; not installed in `.venv` by default.
-
-**Current git state:** branch `phase-2.0-architecture` off `main`. Phase 2.0 work uncommitted at the time of this doc's creation — the user reviews locally before committing/pushing.
+- Real OBD reading on the ESP32 — the reference sketch sends hardcoded values; actual CAN/ISO 9141 reading is the Ingéniorat hardware track (Phase 3.1).
+- Server integration: Get Report POST and Live Session WebSocket are not yet implemented (Phase 3.2).
+- SQLite session logging (Phase 3.4).
+- DTC display on Diagnostic page UI — the `dtc` wire frame is defined and the Diagnostic.qml placeholder exists, but they are not connected (Phase 3.5).
 
 ---
 
@@ -33,13 +39,19 @@ This file is the place for things that are *not* derivable from the code: decisi
 
 | Phase | Title | Status |
 | --- | --- | --- |
-| 1.0 | Mock + ELM327 backend, Qt6 dashboard, RPi5 kiosk | ✅ done — tagged `v1.0-stable` |
-| 2.0 | Architecture refactor: `core` + `sources` over TCP | 🛠 done in this branch, pending review |
-| 2.1 | SQLite session DB + per-trip stats | not started |
-| 2.2 | Diagnostic page real DTC display, "Read DTC" button wired through `query_dtc` | not started |
-| 2.3 | ESP32 firmware as a third source kind, BT-SPP relay | not started — Ingéniorat hardware track |
-| 3.0 | Custom STM32 + MCP2515 PCB | not started |
-| 3.x | Remote analytics / cloud uplink | possibly out of scope for the prototype |
+| 1.0 | Mock + ELM327 backend, Qt6 dashboard, RPi5 kiosk | ✅ done — `v1.0-stable` |
+| 2.0 | Architecture refactor: `core` + `sources` over TCP | ✅ done — `v2.0-stable` |
+| 2.1 | 1024×600 visual polish + warning telltales | ✅ done — `v2.1-stable` |
+| 2.2a | User-facing Diagnostic + hidden DevDiagnostic gesture | ✅ done — `v2.2a-stable` |
+| 2.2b | Onboarding flow + custom QML keyboard + UserProfile | ✅ done — `v2.2b-stable` |
+| 3.0a | Wi-Fi backend via WS commands + Home indicator + COMMANDS.md | ✅ done — `v3.0a-stable` |
+| 3.0b | Bluetooth bridge + BT manager UI + bt-agent + setup_bluetooth.sh | ✅ done — `v3.0b-stable` |
+| 3.0c | ESP32 reference firmware + end-to-end pipeline verified on hardware | ✅ done — `v3.0c-stable` |
+| 3.1 | Real OBD reading on ESP32 (replace hardcoded values, integrate CAN/ISO 9141) | not started — Ingéniorat hardware track |
+| 3.2 | Server integration (Get Report POST, Live Session WebSocket) | not started — friend's server work |
+| 3.3 | Production cleanup (unpair test devices, kiosk hardening, autostart polish) | not started |
+| 3.4 | SQLite session logging + per-trip stats | not started |
+| 3.5 | DTC pipe to Diagnostic page UI | not started |
 
 The phase numbers are how the team refers to milestones in conversation; they do not appear in code or commit messages except where explicitly tagged.
 
@@ -170,6 +182,7 @@ The catalogue of "I tried this in 2026, do not try it again."
 9. **Do not bypass `start_veya.sh` on the Pi**. The script handles the port-clean step that prevents "address already in use" on reboot.
 10. **Do not commit anything in `logs/`, `ui/build/`, or `.venv/`.** Already in `.gitignore`; mentioned here because new contributors sometimes try.
 11. **Do not put workaround comments like `// fix for ws bug` in code.** Phase 2.0 deliberately removed several such comments. The git log is the place for that context.
+12. **Do not auto-start `bt_bridge.py` from `start_veya.sh`.** The bridge is spawned by `ws_server.py` only after a successful `bt_pair` WS command. Auto-starting it would race with the pair handshake — the bridge needs the paired MAC from `~/.veya/bt_config.json`, which only exists after a successful pair.
 
 ---
 
