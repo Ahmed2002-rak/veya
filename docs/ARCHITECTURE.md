@@ -15,17 +15,17 @@ VEYA splits cleanly into **three processes** that talk over **two well-defined w
 │   data source process    │      TCP, JSON-lines     │   veya_core (Python)     │
 │  mock_source.py          │ ───────────────────────► │   asyncio orchestrator   │
 │  elm327_source.py        │       :9000              │                          │
-│  (future) ESP32 firmware │                          │   ┌──────────────────┐   │
+│  bt_bridge.py            │                          │   ┌──────────────────┐   │
 │  (future) STM32+CAN      │                          │   │ TcpSourceServer  │   │
 └──────────────────────────┘                          │   └────────┬─────────┘   │
                                                       │            │             │
-                                                      │   ┌────────▼─────────┐   │
-                                                      │   │ translate +      │   │
-                                                      │   │ cache + warnings │   │
-                                                      │   └────────┬─────────┘   │
-                                                      │            │             │
-                                                      │   ┌────────▼─────────┐   │
-                                                      │   │ UiWebSocketServer│   │
+        ▲                                             │   ┌────────▼─────────┐   │
+        │  BT-Classic SPP / RFCOMM                   │   │ translate +      │   │
+┌───────┴──────────────────┐                          │   │ cache + warnings │   │
+│   ESP32 (firmware)       │                          │   └────────┬─────────┘   │
+│  firmware/esp32/         │                          │            │             │
+│  veya_esp32_sample.ino   │                          │   ┌────────▼─────────┐   │
+└──────────────────────────┘                          │   │ UiWebSocketServer│   │
                                                       │   └────────┬─────────┘   │
                                                       └────────────┼─────────────┘
                                                                    │
@@ -148,11 +148,13 @@ Three implementation details worth knowing:
 
 Each source is a **standalone TCP-client script** importing only `services.veya_core.contract`. They share no state with the core process.
 
+**Bluetooth-SPP source lifecycle:** The ESP32 boots and waits for an RFCOMM client. The user taps Pair in BluetoothManager → `ws_server.py` calls `bluetoothctl pair` then spawns `bt_bridge.py` as a detached subprocess. `bt_bridge.py` opens an RFCOMM socket to the ESP32's MAC, then connects to the core TCP listener at :9000 and forwards bytes bidirectionally. From the core's perspective, `bt_bridge.py` is just another TCP source speaking the wire contract.
+
 | Source | Spawned by | Purpose |
 | --- | --- | --- |
 | `mock_source.py` | `core.py` (when `mode=mock`) | drive-cycle simulation, behaviour preserved bit-for-bit from the legacy `MockProvider` |
 | `elm327_source.py` | manually, by the user | bridges a real ELM327 USB adapter into the wire format |
-| ESP32 firmware (future) | the ESP32 itself | streams CAN-derived telemetry over Bluetooth-SPP relay |
+| `bt_bridge.py` + ESP32 firmware | `ws_server.py` spawns `bt_bridge.py` on successful BT pair; ESP32 connects back via RFCOMM | streams ESP32 telemetry over Bluetooth-SPP relay to TCP :9000 |
 
 **Why standalone scripts and not subclasses:** each source can be debugged with `python -m services.veya_core.sources.mock_source` against any core. It can also be *replaced* by a non-Python implementation (the ESP32 case) without anyone needing to know.
 

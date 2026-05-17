@@ -538,11 +538,7 @@ Page {
                             MouseArea {
                                 id: pairBtnMouse; anchors.fill: parent; hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.popupMac  = modelData.mac  || ""
-                                    root.popupName = modelData.name || ""
-                                    root.popupVisible = true
-                                }
+                                // Click handled by devMouse (whole-row tap target)
                             }
                         }
                     }
@@ -556,7 +552,12 @@ Page {
 
                     MouseArea {
                         id: devMouse; anchors.fill: parent; hoverEnabled: true
-                        // Whole row hoverable; button click handled by nested MouseArea
+                        onClicked: {
+                            if (modelData.paired) return
+                            root.popupMac  = modelData.mac  || ""
+                            root.popupName = modelData.name || ""
+                            root.popupVisible = true
+                        }
                     }
                 }
 
@@ -610,6 +611,16 @@ Page {
     }
 
     // ── Confirm-pair popup ────────────────────────────────────────────────
+    // Dim overlay — must be a sibling of confirmPopup (child of Page root),
+    // not a child of confirmPopup, so anchors.fill: parent is valid.
+    Rectangle {
+        anchors.fill: parent
+        color: Qt.rgba(0,0,0,0.55)
+        visible: root.popupVisible
+        z: 999
+        MouseArea { anchors.fill: parent; onClicked: root.popupVisible = false }
+    }
+
     Rectangle {
         id: confirmPopup
         anchors.centerIn: parent
@@ -618,14 +629,7 @@ Page {
         visible: root.popupVisible
         color: "#111922"
         border.color: root.cBt; border.width: 1
-
-        // Dim overlay
-        Rectangle {
-            anchors.fill: parent.parent
-            color: Qt.rgba(0,0,0,0.55); z: -1
-            visible: root.popupVisible
-            MouseArea { anchors.fill: parent; onClicked: root.popupVisible = false }
-        }
+        z: 1000
 
         ColumnLayout {
             anchors { fill: parent; margins: 20 }

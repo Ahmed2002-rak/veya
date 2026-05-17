@@ -248,6 +248,30 @@ bluetoothctl devices Paired | awk '{print $2}' | xargs -I {} bluetoothctl remove
 
 ---
 
+### Testing the ESP32 reference sketch
+
+```bash
+# Flash firmware/esp32/veya_esp32_sample.ino (Arduino IDE, any classic ESP32 with BT-Classic)
+# Power ESP32, then on VEYA dashboard:
+
+# 1. Open Bluetooth page → Refresh → "VEYA-OBD-SAMPLE" should appear
+# 2. Tap Pair → bt_bridge auto-spawns
+
+# Watch bridge log in real time
+tail -f ~/veya/logs/bt_bridge.log
+
+# 3. Go to Drive → switch to REAL mode
+#    Hardcoded telemetry should appear: 850 rpm, 0 km/h, 85 °C coolant, etc.
+
+# Check the bridge status file (written by bt_bridge, read by ws_server)
+cat /tmp/veya_bt_bridge_status.txt    # "connected" when ESP32 is live
+
+# Kill the bridge manually (it restarts on next Pair)
+pkill -f services.veya_core.bt_bridge
+```
+
+---
+
 ### Wi-Fi / BT coexistence note
 
 On most Raspberry Pi models (including Pi 5), Wi-Fi and Bluetooth share the same

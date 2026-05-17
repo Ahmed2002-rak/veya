@@ -190,11 +190,13 @@ These packages must be present on the Pi for all features to work. Run `scripts/
 
 | Package / service | Purpose | How to install |
 | --- | --- | --- |
-| `bluez` | Core Bluetooth stack (bluetoothd, bluetoothctl) | `sudo apt-get install -y bluez` |
+| `bluez` | Core Bluetooth stack (bluetoothd, bluetoothctl, **hcitool**). `hcitool scan` is used by `helpers/bluetooth.py scan()` for raw BR/EDR inquiry — required to discover BT-Classic SPP devices (e.g. ESP32) that bluetoothctl's filtered scan misses. | `sudo apt-get install -y bluez` |
 | `bluez-tools` | `bt-agent` binary for no-PIN pairing | `sudo apt-get install -y bluez-tools` |
+| Python stdlib `socket` (AF_BLUETOOTH + BTPROTO_RFCOMM) | RFCOMM connection in `bt_bridge.py`. Built-in on Linux — **no install needed**. pybluez / python3-bluez is NOT required and should NOT be installed (dead on Python 3.13). | built-in |
 | `bt-agent` systemd service | Runs `bt-agent --capability=NoInputNoOutput` at boot so the Pi accepts pairing requests without a PIN | `bash scripts/setup_bluetooth.sh` |
 | `matchbox-keyboard` | On-screen keyboard for the Settings / onboarding flow | `sudo apt-get install -y matchbox-keyboard` |
 | NetworkManager + `nmcli` | Wi-Fi management used by the Wi-Fi settings page and `helpers/wifi.py` | `sudo apt-get install -y network-manager` |
+| `firmware/esp32/veya_esp32_sample.ino` | ESP32 reference firmware (BT-Classic SPP, hardcoded telemetry) | Flash with Arduino IDE 2.x + esp32 board manager 2.0.14+ |
 
 ---
 

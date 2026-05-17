@@ -31,12 +31,21 @@ import time
 log = logging.getLogger("veya.bt_bridge")
 
 # ── Config paths ──────────────────────────────────────────────────────────────
-_CONFIG_PATH = pathlib.Path.home() / ".veya" / "bt_config.json"
-_LOG_PATH    = pathlib.Path.home() / "veya" / "logs" / "bt_bridge.log"
+_CONFIG_PATH    = pathlib.Path.home() / ".veya" / "bt_config.json"
+_LOG_PATH       = pathlib.Path.home() / "veya" / "logs" / "bt_bridge.log"
+_BT_STATUS_FILE = pathlib.Path("/tmp/veya_bt_bridge_status.txt")
 
 # ── Reconnect timing ──────────────────────────────────────────────────────────
 _BT_RECONNECT_SLEEP = 5   # seconds between BT reconnect attempts
 _TCP_CONNECT_TIMEOUT = 5  # seconds
+
+
+def _write_bt_status(state: str) -> None:
+    """Write connection state to the IPC status file. Silently ignores errors."""
+    try:
+        _BT_STATUS_FILE.write_text(state)
+    except Exception:
+        pass
 
 
 def _setup_logging() -> None:
@@ -73,14 +82,16 @@ def _connect_tcp(host: str, port: int) -> socket.socket:
     return s
 
 
-def _connect_bt(mac: str, channel: int) -> "bluetooth.BluetoothSocket":  # type: ignore[name-defined]
-    """Open an RFCOMM socket to the ESP32. Raises on failure."""
-    import bluetooth  # pybluez / python3-bluez
-    sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-    log.info("[bridge] Connecting BT RFCOMM → %s ch=%d …", mac, channel)
-    sock.connect((mac, channel))
-    log.info("[bridge] BT connected → %s", mac)
-    return sock
+def _connect_bt(mac: str, channel: int) -> socket.socket:
+    """Open an RFCOMM socket to the ESP32 using Linux's native BTPROTO_RFCOMM.
+    No external libraries needed — AF_BLUETOOTH is part of the stdlib on Linux."""
+    log.info("[bridge] connecting to %s channel %d", mac, channel)
+    s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+    s.settimeout(10.0)
+    s.connect((mac, channel))
+    s.settimeout(None)  # blocking I/O after connect
+    log.info("[bridge] BT RFCOMM socket open")
+    return s
 
 
 def _forward(bt_sock: "socket.socket", tcp_sock: socket.socket) -> str:
@@ -117,18 +128,14 @@ def _forward(bt_sock: "socket.socket", tcp_sock: socket.socket) -> str:
             except OSError as exc:
                 log.info("[bridge] write error on fd=%d: %s", dest_fd, exc)
                 return "bt_closed" if dest_fd == bt_fd else "tcp_closed"
+            try:
+                os.utime("/tmp/veya_bt_bridge_status.txt", None)
+            except Exception:
+                pass
 
 
 def run(mac: str, tcp_host: str, tcp_port: int, rfcomm_channel: int) -> int:
     """Main bridge loop. Returns exit code."""
-    # Verify BT adapter is available
-    try:
-        import bluetooth  # noqa: F401
-    except ImportError:
-        log.error("pybluez (bluetooth module) not available. "
-                  "Run: sudo apt install python3-bluez")
-        return 1
-
     log.info("[bridge] Starting — ESP32 MAC=%s TCP=%s:%d RFCOMM ch=%d",
              mac, tcp_host, tcp_port, rfcomm_channel)
 
@@ -139,6 +146,7 @@ def run(mac: str, tcp_host: str, tcp_port: int, rfcomm_channel: int) -> int:
         except Exception as exc:
             log.error("[bridge] Cannot reach TCP core %s:%d: %s", tcp_host, tcp_port, exc)
             log.info("[bridge] TCP core unavailable — exiting cleanly")
+            _write_bt_status("disconnected")
             return 0
 
         # ── 2. Connect to ESP32 over BT RFCOMM ────────────────────────────
@@ -151,9 +159,13 @@ def run(mac: str, tcp_host: str, tcp_port: int, rfcomm_channel: int) -> int:
             time.sleep(_BT_RECONNECT_SLEEP)
             continue
 
+        _write_bt_status("connected")
+
         # ── 3. Bidirectional forward ───────────────────────────────────────
         reason = _forward(bt_sock, tcp_sock)
         log.info("[bridge] Forward ended: %s", reason)
+
+        _write_bt_status("disconnected")
 
         # Clean up both sockets
         for sock in (bt_sock, tcp_sock):
