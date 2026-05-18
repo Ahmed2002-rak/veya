@@ -29,14 +29,18 @@ DEFAULT_WS_PORT  = 8765   # core ↔ UI (must match VehicleDataProvider.qml)
 
 # ── Frame type constants ─────────────────────────────────────────────────────
 
-FRAME_HELLO         = "hello"           # source → core
-FRAME_TELEMETRY     = "telemetry"       # source → core
-FRAME_DTC           = "dtc"             # source → core
-FRAME_SET_MODE      = "set_mode"        # core → source
-FRAME_QUERY_DTC     = "query_dtc"       # core → source
-FRAME_QUERY_PID     = "query_pid"       # core → source
-FRAME_PID_RESPONSE  = "pid_response"    # source → core
-FRAME_MODE_ERROR    = "mode_error"      # any direction
+FRAME_HELLO              = "hello"              # source → core
+FRAME_TELEMETRY          = "telemetry"          # source → core
+FRAME_DTC                = "dtc"               # source → core
+FRAME_CLEAR_DTC_RESULT   = "clear_dtc_result"  # source → core  (Phase 3.0e)
+FRAME_MILEAGE_RESPONSE   = "mileage_response"  # source → core  (Phase 3.0e)
+FRAME_PID_RESPONSE       = "pid_response"      # source → core  (RESERVED)
+FRAME_SET_MODE           = "set_mode"          # core → source  (DEPRECATED — see §4.4 in CONTRACT.md)
+FRAME_QUERY_DTC          = "query_dtc"         # core → source
+FRAME_CLEAR_DTC          = "clear_dtc"         # core → source  (Phase 3.0e)
+FRAME_QUERY_MILEAGE      = "query_mileage"     # core → source  (Phase 3.0e)
+FRAME_QUERY_PID          = "query_pid"         # core → source  (RESERVED)
+FRAME_MODE_ERROR         = "mode_error"        # any direction
 
 
 # ── Operating modes a source may be told to enter ────────────────────────────
@@ -67,8 +71,9 @@ _TELEMETRY_FIELDS: Dict[str, Tuple[type, ...]] = {
 
 VALID_FRAME_TYPES = (
     FRAME_HELLO, FRAME_TELEMETRY, FRAME_DTC,
-    FRAME_SET_MODE, FRAME_QUERY_DTC, FRAME_QUERY_PID,
-    FRAME_PID_RESPONSE, FRAME_MODE_ERROR,
+    FRAME_CLEAR_DTC_RESULT, FRAME_MILEAGE_RESPONSE, FRAME_PID_RESPONSE,
+    FRAME_SET_MODE, FRAME_QUERY_DTC, FRAME_CLEAR_DTC,
+    FRAME_QUERY_MILEAGE, FRAME_QUERY_PID, FRAME_MODE_ERROR,
 )
 
 
@@ -140,11 +145,27 @@ def validate_frame(frame: Any) -> Tuple[bool, str]:
         if "value" not in frame:
             return False, "pid_response requires `value`"
 
+    elif ftype == FRAME_CLEAR_DTC_RESULT:
+        if not isinstance(frame.get("ok"), bool):
+            return False, "clear_dtc_result requires bool `ok`"
+        if "cleared_count" in frame and not isinstance(frame["cleared_count"], int):
+            return False, "clear_dtc_result.cleared_count must be int"
+        if "error" in frame and not isinstance(frame["error"], str):
+            return False, "clear_dtc_result.error must be string"
+
+    elif ftype == FRAME_MILEAGE_RESPONSE:
+        has_km = isinstance(frame.get("km"), int)
+        ok_false = frame.get("ok") is False
+        if not has_km and not ok_false:
+            return False, "mileage_response requires int `km` (success) or `ok: false` (failure)"
+        if "error" in frame and not isinstance(frame["error"], str):
+            return False, "mileage_response.error must be string"
+
     elif ftype == FRAME_MODE_ERROR:
         if not isinstance(frame.get("reason"), str):
             return False, "mode_error requires string `reason`"
 
-    # FRAME_QUERY_DTC has no required payload beyond schema/type.
+    # FRAME_QUERY_DTC, FRAME_CLEAR_DTC, FRAME_QUERY_MILEAGE have no required payload beyond schema/type.
     return True, ""
 
 
@@ -211,6 +232,60 @@ def build_set_mode(mode: str, **extra: Any) -> Dict[str, Any]:
 
 def build_query_dtc(**extra: Any) -> Dict[str, Any]:
     f = _base(FRAME_QUERY_DTC)
+    f.update(extra)
+    return f
+
+
+def build_clear_dtc(**extra: Any) -> Dict[str, Any]:
+    """Build a clear_dtc command frame (Pi → ESP32, Phase 3.0e)."""
+    f = _base(FRAME_CLEAR_DTC)
+    f.update(extra)
+    return f
+
+
+def build_clear_dtc_result(
+    ok: bool,
+    cleared_count: Optional[int] = None,
+    error: Optional[str] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Build a clear_dtc_result response frame (ESP32 → Pi, Phase 3.0e)."""
+    f = _base(FRAME_CLEAR_DTC_RESULT)
+    f["ok"] = ok
+    if cleared_count is not None:
+        f["cleared_count"] = cleared_count
+    if error is not None:
+        f["error"] = error
+    f.update(extra)
+    return f
+
+
+def build_query_mileage(**extra: Any) -> Dict[str, Any]:
+    """Build a query_mileage command frame (Pi → ESP32, Phase 3.0e)."""
+    f = _base(FRAME_QUERY_MILEAGE)
+    f.update(extra)
+    return f
+
+
+def build_mileage_response(
+    km: Optional[int] = None,
+    ok: Optional[bool] = None,
+    source_pid: Optional[str] = None,
+    error: Optional[str] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Build a mileage_response frame (ESP32 → Pi, Phase 3.0e).
+    Pass km for success, ok=False + error for failure.
+    """
+    f = _base(FRAME_MILEAGE_RESPONSE)
+    if km is not None:
+        f["km"] = km
+    if ok is not None:
+        f["ok"] = ok
+    if source_pid is not None:
+        f["source_pid"] = source_pid
+    if error is not None:
+        f["error"] = error
     f.update(extra)
     return f
 

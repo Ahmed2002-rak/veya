@@ -1,6 +1,6 @@
 # VEYA — Source-to-Core Wire Contract
 
-> **Status:** Phase 2.0, schema version `1`
+> **Status:** Phase 3.0e, schema version `1`
 > **Audience:** ESP32 firmware authors, Python source authors, AI assistants, thesis readers
 > **Authoritative source:** `services/veya_core/contract.py` — if this document and the code disagree, the code wins. File a fix.
 
@@ -69,18 +69,19 @@ Every frame is a JSON object with at least:
 
 ## 4. Frame types
 
-There are eight frame types. Three flow from source to core, three from core to source, two are bidirectional.
-
-| Constant (`contract.py`) | Wire `type` | Direction |
-| --- | --- | --- |
-| `FRAME_HELLO` | `hello` | source → core |
-| `FRAME_TELEMETRY` | `telemetry` | source → core |
-| `FRAME_DTC` | `dtc` | source → core |
-| `FRAME_PID_RESPONSE` | `pid_response` | source → core |
-| `FRAME_SET_MODE` | `set_mode` | core → source |
-| `FRAME_QUERY_DTC` | `query_dtc` | core → source |
-| `FRAME_QUERY_PID` | `query_pid` | core → source |
-| `FRAME_MODE_ERROR` | `mode_error` | either |
+| Constant (`contract.py`) | Wire `type` | Direction | Notes |
+|---|---|---|---|
+| `FRAME_HELLO` | `hello` | source → core | Once on connect |
+| `FRAME_TELEMETRY` | `telemetry` | source → core | Continuous, 5–10 Hz |
+| `FRAME_DTC` | `dtc` | source → core | Reply to query_dtc OR unsolicited |
+| `FRAME_CLEAR_DTC_RESULT` | `clear_dtc_result` | source → core | Reply to clear_dtc (NEW) |
+| `FRAME_MILEAGE_RESPONSE` | `mileage_response` | source → core | Reply to query_mileage (NEW) |
+| `FRAME_PID_RESPONSE` | `pid_response` | source → core | RESERVED — not used in current UI |
+| `FRAME_QUERY_DTC` | `query_dtc` | core → source | Pi requests DTC scan |
+| `FRAME_CLEAR_DTC` | `clear_dtc` | core → source | Pi requests DTC wipe (NEW) |
+| `FRAME_QUERY_MILEAGE` | `query_mileage` | core → source | Pi requests odometer (NEW) |
+| `FRAME_QUERY_PID` | `query_pid` | core → source | RESERVED — not used in current UI |
+| `FRAME_MODE_ERROR` | `mode_error` | either | Failure surface |
 
 ### 4.1 `hello` — source identifies itself
 
@@ -150,28 +151,68 @@ Sent in response to `query_dtc`, or proactively when the source detects a fault.
 
 An empty `codes: []` is a valid frame meaning *no faults*.
 
-### 4.4 `set_mode` — core asks source to switch operating mode
+### 4.4 `set_mode` — DEPRECATED
+
+**DEPRECATED — kept for backward compatibility.**
+
+The `set_mode` verb was part of the original Phase 2.0 contract. After hardware verification in Phase 3.0c, the ESP32 design was simplified: the firmware streams telemetry continuously at 5–10 Hz with no mode switching. The Pi sets the user-facing context (Drive screen, Live Session, Dev) on its own side; the ESP32 doesn't need to know.
+
+The `set_mode` handler remains in `ws_server.py` to preserve backward compatibility with `VehicleDataProvider.qml`'s TEST/REAL toggle (which sends `{"cmd":"set_mode","mode":"mock"|"elm"}`). This is a UI-layer command, NOT a source-layer command, despite the historical naming overlap.
+
+Future contract revisions may remove the source-layer `set_mode` entirely. New firmware should NOT implement it.
+
+### 4.5 `clear_dtc` (Pi → ESP32) — Phase 3.0e
 
 ```json
-{ "schema": 1, "type": "set_mode", "mode": "drive" }
+{ "schema": 1, "type": "clear_dtc" }
 ```
 
-| Field | Type | Required |
-| --- | --- | --- |
-| `mode` | string | yes — one of `"drive"`, `"diagnostic"`, `"live_scan"`, `"idle"` |
+No payload. The ESP32 should issue OBD-II Mode 04 to wipe stored codes and Freeze Frame data, then send `clear_dtc_result`.
 
-The four modes are advisory hints to the source about what telemetry rate / which PIDs to query:
+### 4.6 `clear_dtc_result` (ESP32 → Pi) — Phase 3.0e
 
-| Mode | Suggested behavior |
-| --- | --- |
-| `drive` | full telemetry stream at the source's nominal rate (default) |
-| `diagnostic` | reduce telemetry to ~1 Hz so DTC queries / PID probes have bandwidth |
-| `live_scan` | full telemetry — same as drive, distinct only so the Diagnostic page can label its UI |
-| `idle` | engine-off / parked — source may slow to a trickle to save power |
+```json
+{ "schema": 1, "type": "clear_dtc_result", "ok": true, "cleared_count": 3 }
+```
 
-A source that does not implement a mode should ignore the frame; the core will not enforce compliance.
+On failure:
+```json
+{ "schema": 1, "type": "clear_dtc_result", "ok": false, "error": "ECU rejected Mode 04 (engine running)" }
+```
 
-### 4.5 `query_dtc` — core asks source to read DTCs
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ok` | bool | yes | true if Mode 04 succeeded |
+| `cleared_count` | int | optional | how many codes were removed (if ECU reports it) |
+| `error` | string | optional | only when `ok: false` — short human-readable reason |
+
+### 4.7 `query_mileage` (Pi → ESP32) — Phase 3.0e
+
+```json
+{ "schema": 1, "type": "query_mileage" }
+```
+
+No payload. The ESP32 should read OBD-II Mode 01 PID `0xA6` (or fall back to manufacturer-specific PID) and send `mileage_response`.
+
+### 4.8 `mileage_response` (ESP32 → Pi) — Phase 3.0e
+
+```json
+{ "schema": 1, "type": "mileage_response", "km": 142385, "source_pid": "A6" }
+```
+
+On failure:
+```json
+{ "schema": 1, "type": "mileage_response", "ok": false, "error": "PID A6 not supported by ECU" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `km` | int | yes (on success) | total odometer reading in kilometers |
+| `source_pid` | string | optional | which OBD-II PID was used (debug aid) |
+| `ok` | bool | optional | implicit true if `km` present; explicit false on failure |
+| `error` | string | optional | only when read fails |
+
+### 4.9 `query_dtc` — core asks source to read DTCs
 
 ```json
 { "schema": 1, "type": "query_dtc" }
@@ -179,7 +220,7 @@ A source that does not implement a mode should ignore the frame; the core will n
 
 No payload. The source replies with one `dtc` frame.
 
-### 4.6 `query_pid` / `pid_response` — single-PID probe (Phase 2.2+)
+### 4.10 `query_pid` / `pid_response` — single-PID probe (RESERVED)
 
 Reserved for the Diagnostic page's "live PID scan" feature. Not yet wired into the UI.
 
@@ -193,7 +234,7 @@ Reserved for the Diagnostic page's "live PID scan" feature. Not yet wired into t
 
 `pid` is the OBD-II PID hex code (without the `0x` prefix). `value` is whatever the source decoded — the receiver is expected to know the PID's unit.
 
-### 4.7 `mode_error` — failure / refusal
+### 4.11 `mode_error` — failure / refusal
 
 Either side may send this. The core sends it to the second concurrent source on rejection; a source may send it to surface a hardware fault to the user.
 
@@ -294,7 +335,7 @@ while (true) {
 }
 ```
 
-The full firmware will need to *also* read commands from `tcp` and react to `set_mode` / `query_dtc`.
+The full firmware will need to *also* read commands from `tcp` and react to `query_dtc` / `clear_dtc` / `query_mileage` (see §10). The `set_mode` command is deprecated — new firmware should NOT implement it.
 
 ---
 
@@ -364,10 +405,28 @@ When this section is filled in, it will follow the same pattern as the Bluetooth
 
 ---
 
+## 10. User action → Command sequence — Phase 3.0e
+
+| User action on Pi dashboard | Pi sends to ESP32 | ESP32 reply |
+|---|---|---|
+| BT pair completes | — | `hello` on SPP connect |
+| Any time after hello | — | continuous `telemetry` at 5–10 Hz |
+| User enters Drive | — | (already streaming) |
+| User taps "Get Report" | `query_dtc` | `dtc` once |
+| User taps "Start Live Session" | `query_dtc` | `dtc` once |
+| Expert (via server) clicks "Clear DTCs" | `clear_dtc` | `clear_dtc_result` |
+| Expert requests new DTC scan | `query_dtc` | `dtc` |
+| User enters DevDiagnostic (5-tap gesture) | — | (already streaming) |
+| User taps "Read DTCs" in Dev | `query_dtc` | `dtc` |
+| User taps "Clear DTCs" in Dev | `clear_dtc` | `clear_dtc_result` |
+| User taps "Read Mileage" in Dev | `query_mileage` | `mileage_response` |
+
+---
+
 ## Recent additions
 
 - **Phase 3.0c** added the Bluetooth Transport section above. The wire frame format (line-delimited JSON, schema `1`) is unchanged — only the physical transport from source to core changed (BT-Classic SPP relayed by `bt_bridge.py` instead of direct TCP).
-- **No new frame types** have been added to the source-facing contract since Phase 2.0. The 8 frame types in §4 remain canonical.
+- **Phase 3.0e** locked the ESP32 command protocol. Four new frame types added: `clear_dtc` (Pi→ESP32), `clear_dtc_result` (ESP32→Pi), `query_mileage` (Pi→ESP32), `mileage_response` (ESP32→Pi). The `set_mode` source-layer verb is deprecated — ESP32 streams telemetry continuously with no mode switching. Three new UI WS commands added (`esp32_query_dtc`, `esp32_clear_dtc`, `esp32_query_mileage`) that route Pi-side button presses through core.py to the ESP32 over TCP/BT.
 - The Pi ↔ UI WebSocket layer added several new command verbs (`save_profile`, `load_profile`, `wifi_*`, `bt_*`, `bt_pairing_mode`) but these are orthogonal to the source contract — they live on the UI WS layer, not the source TCP layer.
 
 ---

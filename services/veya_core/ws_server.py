@@ -28,7 +28,7 @@ needs no changes:
     }
 
 Incoming UI commands:
-    {"cmd": "set_mode",    "mode": "mock"|"elm"}
+    {"cmd": "set_mode",    "mode": "mock"|"elm"}   ← UI-layer toggle; NOT a source-layer set_mode
     {"cmd": "wifi_scan"}
     {"cmd": "wifi_status"}
     {"cmd": "wifi_connect",    "ssid": "...", "password": "..."}
@@ -42,6 +42,9 @@ Incoming UI commands:
     {"cmd": "bt_disconnect"}
     {"cmd": "bt_bridge_status"}
     {"cmd": "bt_pairing_mode", "enabled": true|false}
+    {"cmd": "esp32_query_dtc"}      ← Phase 3.0e: routes query_dtc to ESP32 via TCP
+    {"cmd": "esp32_clear_dtc"}      ← Phase 3.0e: routes clear_dtc to ESP32 via TCP
+    {"cmd": "esp32_query_mileage"}  ← Phase 3.0e: routes query_mileage to ESP32 via TCP
 
 Note: the new source-facing protocol (contract.py) is unrelated to this
 file. Translation happens in core.py.
@@ -160,6 +163,27 @@ class UiWebSocketServer:
         for ws in dead:
             self._clients.discard(ws)
 
+    async def broadcast_event(self, frame: Dict[str, Any]) -> None:
+        """
+        Broadcast a non-telemetry event frame (dtc, clear_dtc_result, mileage_response)
+        to every connected UI client. No rate limiting — these are infrequent, one-shot
+        responses, not continuous telemetry.
+        """
+        if not self._clients:
+            return
+        payload = json.dumps(frame, separators=(",", ":"))
+        dead = []
+        for ws in list(self._clients):
+            try:
+                await ws.send(payload)
+            except websockets.ConnectionClosed:
+                dead.append(ws)
+            except Exception:
+                log.exception("[ws] broadcast_event send failed")
+                dead.append(ws)
+        for ws in dead:
+            self._clients.discard(ws)
+
     # ── Per-client handler ───────────────────────────────────────────────────
 
     async def _handle_client(self, ws: Any) -> None:
@@ -175,6 +199,8 @@ class UiWebSocketServer:
                 if not isinstance(obj, dict):
                     continue
                 if obj.get("cmd") == "set_mode":
+                    # UI-layer TEST/REAL toggle — "mock"|"elm" selects the Pi-side mode.
+                    # This is NOT the source-layer set_mode verb (deprecated in Phase 3.0e).
                     mode = obj.get("mode")
                     if mode not in ("mock", "elm"):
                         log.warning("[ws] ignoring set_mode with bad mode=%r", mode)
@@ -228,6 +254,25 @@ class UiWebSocketServer:
                 elif obj.get("cmd") == "bt_pairing_mode":
                     enabled = bool(obj.get("enabled", False))
                     asyncio.create_task(self._handle_bt_pairing_mode(ws, enabled))
+                # ── ESP32 command routing (Phase 3.0e) ───────────────────────
+                elif obj.get("cmd") == "esp32_query_dtc":
+                    log.info("[ws] ← esp32_query_dtc from %s", peer)
+                    try:
+                        await self._on_ui_command({"cmd": "esp32_query_dtc"})
+                    except Exception:
+                        log.exception("[ws] on_ui_command callback raised")
+                elif obj.get("cmd") == "esp32_clear_dtc":
+                    log.info("[ws] ← esp32_clear_dtc from %s", peer)
+                    try:
+                        await self._on_ui_command({"cmd": "esp32_clear_dtc"})
+                    except Exception:
+                        log.exception("[ws] on_ui_command callback raised")
+                elif obj.get("cmd") == "esp32_query_mileage":
+                    log.info("[ws] ← esp32_query_mileage from %s", peer)
+                    try:
+                        await self._on_ui_command({"cmd": "esp32_query_mileage"})
+                    except Exception:
+                        log.exception("[ws] on_ui_command callback raised")
         except websockets.ConnectionClosed:
             pass
         finally:

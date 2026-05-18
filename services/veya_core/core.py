@@ -218,9 +218,28 @@ class VeyaCore:
             return
 
         if ftype == contract.FRAME_DTC:
-            # DTCs aren't part of the legacy UI schema yet; log so the
-            # Diagnostic page work in Phase 2.2 can wire it up.
-            log.info("[core] DTC frame: %s", frame.get("codes"))
+            codes = frame.get("codes", [])
+            log.info("[core] DTC frame: %d codes", len(codes))
+            await self._ws.broadcast_event({"type": "dtc", "codes": codes})
+            return
+
+        if ftype == contract.FRAME_CLEAR_DTC_RESULT:
+            log.info("[core] clear_dtc_result: ok=%s", frame.get("ok"))
+            ui_frame: Dict[str, Any] = {"type": "clear_dtc_result", "ok": frame.get("ok")}
+            if "cleared_count" in frame:
+                ui_frame["cleared_count"] = frame["cleared_count"]
+            if "error" in frame:
+                ui_frame["error"] = frame["error"]
+            await self._ws.broadcast_event(ui_frame)
+            return
+
+        if ftype == contract.FRAME_MILEAGE_RESPONSE:
+            log.info("[core] mileage_response: km=%s", frame.get("km"))
+            ui_frame = {"type": "mileage_response"}
+            for key in ("km", "ok", "source_pid", "error"):
+                if key in frame:
+                    ui_frame[key] = frame[key]
+            await self._ws.broadcast_event(ui_frame)
             return
 
         if ftype == contract.FRAME_PID_RESPONSE:
@@ -271,7 +290,28 @@ class VeyaCore:
     # ── UI command handling (UI → core) ──────────────────────────────────────
 
     async def _on_ui_command(self, cmd: Dict[str, Any]) -> None:
-        if cmd.get("cmd") != "set_mode":
+        verb = cmd.get("cmd")
+
+        # ── ESP32 command routing (Phase 3.0e) ───────────────────────────────
+        if verb == "esp32_query_dtc":
+            sent = await self._tcp.send_to_source(contract.build_query_dtc())
+            if not sent:
+                log.warning("[core] esp32_query_dtc: no source connected")
+            return
+
+        if verb == "esp32_clear_dtc":
+            sent = await self._tcp.send_to_source(contract.build_clear_dtc())
+            if not sent:
+                log.warning("[core] esp32_clear_dtc: no source connected")
+            return
+
+        if verb == "esp32_query_mileage":
+            sent = await self._tcp.send_to_source(contract.build_query_mileage())
+            if not sent:
+                log.warning("[core] esp32_query_mileage: no source connected")
+            return
+
+        if verb != "set_mode":
             log.warning("[core] unknown UI command: %s", cmd)
             return
 
