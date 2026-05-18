@@ -1,49 +1,30 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Effects
-import QtWebSockets
 import Veya 1.0
 
 Page {
     id: root
-    width: parent.width
-    height: parent.height
     clip: true
 
-    property var nav: null
+    property var nav:        null
+    property var reportData: null
 
     background: Rectangle { color: "transparent" }
 
     readonly property color cBorder: "#1A4040"
     readonly property color cCyan:   "#4DD2FF"
-    readonly property color cText:   "white"
+    readonly property color cAmber:  "#FFD84D"
     readonly property color cWarn:   "#FF4D6D"
-    readonly property color cDim:    Qt.rgba(1, 1, 1, 0.6)
+    readonly property color cGreen:  "#47FF9A"
+    readonly property color cText:   "white"
+    readonly property color cDim:    Qt.rgba(1, 1, 1, 0.55)
+    readonly property color cBg:     "#0B0F14"
 
-    // ── Server config (Phase 3.0a) ───────────────────────────────────────
-    property string reportUrl: ""
-
-    readonly property string buttonTooltip: {
-        if (reportUrl.length === 0) return "Server not configured — run set_server_url.py report <url>"
-        return "Server unreachable — check network connection"
-    }
-
-    WebSocket {
-        id: reportConfigWs
-        url: "ws://127.0.0.1:8765"
-        active: true
-        onStatusChanged: {
-            if (status === WebSocket.Open)
-                reportConfigWs.sendTextMessage(JSON.stringify({ cmd: "load_server_config" }))
-        }
-        onTextMessageReceived: function(message) {
-            let obj
-            try { obj = JSON.parse(message) } catch(e) { return }
-            if (obj.type === "server_config") {
-                root.reportUrl = (obj.data && obj.data.report_url) ? obj.data.report_url : ""
-            }
-        }
+    function severityColor(sev) {
+        if (sev === "critical") return cWarn
+        if (sev === "warning")  return cAmber
+        return cCyan
     }
 
     // ── Background ───────────────────────────────────────────────────────
@@ -120,225 +101,319 @@ Page {
 
             Item { Layout.fillWidth: true }
 
-            ColumnLayout {
+            // Connection badge
+            Rectangle {
                 Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: root.width * 0.28
-                Layout.maximumWidth:   root.width * 0.30
-                spacing: 4
+                Layout.preferredHeight: 28
+                Layout.preferredWidth: Math.min(rBadgeRow.implicitWidth + 22, root.width * 0.28)
+                radius: 14
+                color: VehicleDataProvider.connected
+                       ? Qt.rgba(0.30, 0.82, 1, 0.10)
+                       : Qt.rgba(1, 0.30, 0.43, 0.12)
+                border.color: VehicleDataProvider.connected ? root.cCyan : root.cWarn
+                border.width: 1
 
-                Rectangle {
-                    Layout.alignment: Qt.AlignRight
-                    Layout.preferredHeight: 28
-                    Layout.preferredWidth: Math.min(rBadgeRow.implicitWidth + 22, root.width * 0.28)
-                    radius: 14
-                    color: {
-                        if (!VehicleDataProvider.connected)
-                            return Qt.rgba(1, 0.30, 0.43, 0.12)
-                        return VehicleDataProvider.dataMode === "elm"
-                            ? Qt.rgba(0.47, 1, 0.60, 0.10)
-                            : Qt.rgba(0.30, 0.82, 1, 0.10)
+                Row {
+                    id: rBadgeRow
+                    anchors.centerIn: parent
+                    spacing: 7
+
+                    Rectangle {
+                        width: 7; height: 7; radius: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: VehicleDataProvider.connected ? root.cCyan : root.cWarn
                     }
-                    border.color: {
-                        if (!VehicleDataProvider.connected) return root.cWarn
-                        return VehicleDataProvider.dataMode === "elm"
-                            ? "#47FF9A" : root.cCyan
+                    Text {
+                        text: VehicleDataProvider.connected ? "CONNECTED" : "OFFLINE"
+                        color: root.cText
+                        font.pixelSize: 11; font.bold: true
+                        font.letterSpacing: 1.4; font.family: "DejaVu Sans"
                     }
-                    border.width: 1
-                    Behavior on color        { ColorAnimation { duration: 400 } }
-                    Behavior on border.color { ColorAnimation { duration: 400 } }
-
-                    Row {
-                        id: rBadgeRow
-                        anchors.centerIn: parent
-                        spacing: 7
-
-                        Rectangle {
-                            width: 7; height: 7; radius: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: {
-                                if (!VehicleDataProvider.connected) return root.cWarn
-                                return VehicleDataProvider.dataMode === "elm"
-                                    ? "#47FF9A" : root.cCyan
-                            }
-                            SequentialAnimation on opacity {
-                                running: !VehicleDataProvider.connected
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.2; duration: 600 }
-                                NumberAnimation { to: 1.0; duration: 600 }
-                            }
-                        }
-
-                        Text {
-                            text: {
-                                if (!VehicleDataProvider.connected) return "OFFLINE"
-                                const m = VehicleDataProvider.dataMode
-                                return m === "elm"  ? "ELM"
-                                     : m === "mock" ? "MOCK"
-                                     :                "—"
-                            }
-                            color: root.cText
-                            font.pixelSize: 11; font.bold: true
-                            font.letterSpacing: 1.4; font.family: "DejaVu Sans"
-                        }
-                    }
-                }
-
-                DemoBadge {
-                    Layout.alignment: Qt.AlignRight
-                    Layout.maximumWidth: root.width * 0.28
                 }
             }
         }
 
-        // ── Center content ────────────────────────────────────────────────
+        // ── Content ───────────────────────────────────────────────────────
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
+            // ── No data placeholder ───────────────────────────────────────
             ColumnLayout {
                 anchors.centerIn: parent
-                width: root.width * 0.6
-                spacing: 20
-
-                // Icon
-                Item {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 80; height: 80
-
-                    Image {
-                        id: reportBigIcon
-                        anchors.fill: parent
-                        source: "qrc:/qt/qml/Veya/qml/assets/icon_settings.svg"
-                        fillMode: Image.PreserveAspectFit
-                        visible: false
-                    }
-                    MultiEffect {
-                        source: reportBigIcon
-                        anchors.fill: reportBigIcon
-                        colorization: 1.0
-                        colorizationColor: root.cCyan
-                    }
-                }
+                visible: reportData === null
+                spacing: 16
 
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "Report Coming Soon"
-                    color: root.cText
-                    font.pixelSize: 28; font.bold: true
+                    text: "No report data"
+                    color: root.cDim
+                    font.pixelSize: 24; font.bold: true
                     font.family: "DejaVu Sans"
                 }
-
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.maximumWidth: root.width * 0.6
-                    text: "Connect to the internet and start a session to receive a guided diagnostic report from a remote expert."
-                    color: root.cDim
-                    font.pixelSize: 16; font.family: "DejaVu Sans"
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignHCenter
+                    text: "Generate a report from the Diagnostic screen."
+                    color: Qt.rgba(1,1,1,0.35)
+                    font.pixelSize: 14; font.family: "DejaVu Sans"
                 }
+            }
 
-                // Status panel
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: root.width * 0.5
-                    height: statusCol.implicitHeight + 24
-                    radius: 12
-                    color: Qt.rgba(1, 1, 1, 0.04)
-                    border.color: Qt.rgba(1, 1, 1, 0.09); border.width: 1
+            // ── Scrollable report ─────────────────────────────────────────
+            ScrollView {
+                anchors.fill: parent
+                visible: reportData !== null
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    ColumnLayout {
-                        id: statusCol
-                        anchors { left: parent.left; right: parent.right; margins: 16 }
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 10
+                ColumnLayout {
+                    width: parent.width
+                    spacing: 14
 
-                        // Backend status row
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-
-                            Rectangle {
-                                width: 8; height: 8; radius: 4
-                                color: VehicleDataProvider.connected ? "#47FF9A" : root.cWarn
-                                Behavior on color { ColorAnimation { duration: 300 } }
-                            }
-                            Text {
-                                text: "Backend: " + (VehicleDataProvider.connected ? "Connected" : "Disconnected")
-                                color: root.cText
-                                font.pixelSize: 14; font.family: "DejaVu Sans"
-                            }
-                            Item { Layout.fillWidth: true }
+                    // ── HEADER CARD ──────────────────────────────────────
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 8
+                        height: headerCol.implicitHeight + 28
+                        radius: 14
+                        color: Qt.rgba(1, 1, 1, 0.04)
+                        border.color: {
+                            const sev = reportData ? (reportData.severity || "") : ""
+                            return root.severityColor(sev)
                         }
+                        border.width: 1
 
-                        // Mode row
-                        RowLayout {
-                            Layout.fillWidth: true
+                        ColumnLayout {
+                            id: headerCol
+                            anchors { left: parent.left; right: parent.right; margins: 18 }
+                            anchors.verticalCenter: parent.verticalCenter
                             spacing: 8
 
-                            Rectangle {
-                                width: 8; height: 8; radius: 4
-                                color: root.cCyan; opacity: 0.7
+                            // report_id + timestamp row
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: reportData ? (reportData.report_id || "—") : "—"
+                                    color: root.cDim
+                                    font.pixelSize: 11; font.family: "DejaVu Sans Mono"
+                                }
+                                Item { Layout.fillWidth: true }
+                                Text {
+                                    text: reportData ? (reportData.timestamp || "") : ""
+                                    color: root.cDim
+                                    font.pixelSize: 11; font.family: "DejaVu Sans"
+                                }
                             }
+
+                            // Severity badge
+                            Rectangle {
+                                height: 26; width: sevText.implicitWidth + 24
+                                radius: 13
+                                color: Qt.rgba(0,0,0,0.30)
+                                border.color: {
+                                    const sev = reportData ? (reportData.severity || "") : ""
+                                    return root.severityColor(sev)
+                                }
+                                border.width: 1
+
+                                Text {
+                                    id: sevText
+                                    anchors.centerIn: parent
+                                    text: reportData ? (reportData.severity || "info").toUpperCase() : "—"
+                                    color: {
+                                        const sev = reportData ? (reportData.severity || "") : ""
+                                        return root.severityColor(sev)
+                                    }
+                                    font.pixelSize: 12; font.bold: true
+                                    font.letterSpacing: 1.4; font.family: "DejaVu Sans"
+                                }
+                            }
+
+                            // Summary
                             Text {
-                                text: "Mode: " + VehicleDataProvider.dataMode.toUpperCase()
+                                Layout.fillWidth: true
+                                text: reportData ? (reportData.summary || "") : ""
                                 color: root.cText
-                                font.pixelSize: 14; font.family: "DejaVu Sans"
+                                font.pixelSize: 15; font.family: "DejaVu Sans"
+                                wrapMode: Text.WordWrap
                             }
-                            Item { Layout.fillWidth: true }
                         }
+                    }
 
-                        // Internet row (placeholder)
-                        RowLayout {
+                    // ── DTC ANALYSIS CARDS ──────────────────────────────
+                    Repeater {
+                        model: reportData ? (reportData.dtc_analyses || []) : []
+
+                        delegate: Rectangle {
                             Layout.fillWidth: true
-                            spacing: 8
+                            height: dtcCol.implicitHeight + 28
+                            radius: 14
+                            color: Qt.rgba(1, 0.30, 0.43, 0.05)
+                            border.color: Qt.rgba(1, 0.30, 0.43, 0.30)
+                            border.width: 1
 
-                            Rectangle {
-                                width: 8; height: 8; radius: 4
-                                color: Qt.rgba(1, 1, 1, 0.3)
+                            required property var modelData
+
+                            ColumnLayout {
+                                id: dtcCol
+                                anchors { left: parent.left; right: parent.right; margins: 18 }
+                                anchors.top: parent.top; anchors.topMargin: 14
+                                spacing: 8
+
+                                // Code badge + title row
+                                RowLayout {
+                                    spacing: 12
+                                    Rectangle {
+                                        height: 28; width: codeText.implicitWidth + 16
+                                        radius: 6
+                                        color: Qt.rgba(1, 0.30, 0.43, 0.15)
+                                        border.color: root.cWarn; border.width: 1
+                                        Text {
+                                            id: codeText
+                                            anchors.centerIn: parent
+                                            text: modelData.code || "???"
+                                            color: root.cWarn
+                                            font.pixelSize: 14; font.bold: true
+                                            font.family: "DejaVu Sans Mono"
+                                        }
+                                    }
+                                    Text {
+                                        text: modelData.title || ""
+                                        color: root.cText
+                                        font.pixelSize: 15; font.bold: true
+                                        font.family: "DejaVu Sans"
+                                        wrapMode: Text.WordWrap
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                // Description
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.description || ""
+                                    color: root.cDim
+                                    font.pixelSize: 13; font.family: "DejaVu Sans"
+                                    wrapMode: Text.WordWrap
+                                    visible: text.length > 0
+                                }
+
+                                // Causes
+                                Column {
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    visible: (modelData.causes || []).length > 0
+                                    Text {
+                                        text: "● CAUSES"
+                                        color: root.cAmber
+                                        font.pixelSize: 11; font.bold: true
+                                        font.letterSpacing: 1.2; font.family: "DejaVu Sans"
+                                    }
+                                    Repeater {
+                                        model: modelData.causes || []
+                                        Text {
+                                            required property string modelData
+                                            text: "  · " + modelData
+                                            color: root.cDim
+                                            font.pixelSize: 13; font.family: "DejaVu Sans"
+                                            wrapMode: Text.WordWrap
+                                            width: parent.width
+                                        }
+                                    }
+                                }
+
+                                // Symptoms
+                                Column {
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    visible: (modelData.symptoms || []).length > 0
+                                    Text {
+                                        text: "● SYMPTOMS"
+                                        color: root.cAmber
+                                        font.pixelSize: 11; font.bold: true
+                                        font.letterSpacing: 1.2; font.family: "DejaVu Sans"
+                                    }
+                                    Repeater {
+                                        model: modelData.symptoms || []
+                                        Text {
+                                            required property string modelData
+                                            text: "  · " + modelData
+                                            color: root.cDim
+                                            font.pixelSize: 13; font.family: "DejaVu Sans"
+                                            wrapMode: Text.WordWrap
+                                            width: parent.width
+                                        }
+                                    }
+                                }
+
+                                // Recommended actions
+                                Column {
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    visible: (modelData.recommended_actions || []).length > 0
+                                    Text {
+                                        text: "● RECOMMENDED ACTIONS"
+                                        color: root.cCyan
+                                        font.pixelSize: 11; font.bold: true
+                                        font.letterSpacing: 1.2; font.family: "DejaVu Sans"
+                                    }
+                                    Repeater {
+                                        model: modelData.recommended_actions || []
+                                        Text {
+                                            required property string modelData
+                                            text: "  · " + modelData
+                                            color: root.cDim
+                                            font.pixelSize: 13; font.family: "DejaVu Sans"
+                                            wrapMode: Text.WordWrap
+                                            width: parent.width
+                                        }
+                                    }
+                                }
+
+                                Item { height: 4 }
                             }
+                        }
+                    }
+
+                    // ── FOOTER CARD ──────────────────────────────────────
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: 8
+                        height: footerCol.implicitHeight + 28
+                        radius: 14
+                        color: Qt.rgba(1, 1, 1, 0.04)
+                        border.color: Qt.rgba(0.30, 0.82, 1, 0.30)
+                        border.width: 1
+                        visible: (reportData && (reportData.overall_recommendations || []).length > 0)
+
+                        Column {
+                            id: footerCol
+                            anchors { left: parent.left; right: parent.right; margins: 18 }
+                            anchors.top: parent.top; anchors.topMargin: 14
+                            spacing: 4
+
                             Text {
-                                text: "Internet: Not configured"
-                                color: Qt.rgba(1, 1, 1, 0.45)
-                                font.pixelSize: 14; font.family: "DejaVu Sans"
+                                text: "● OVERALL RECOMMENDATIONS"
+                                color: root.cGreen
+                                font.pixelSize: 11; font.bold: true
+                                font.letterSpacing: 1.2; font.family: "DejaVu Sans"
                             }
-                            Item { Layout.fillWidth: true }
+
+                            Repeater {
+                                model: reportData ? (reportData.overall_recommendations || []) : []
+                                Text {
+                                    required property string modelData
+                                    text: "  · " + modelData
+                                    color: root.cDim
+                                    font.pixelSize: 13; font.family: "DejaVu Sans"
+                                    wrapMode: Text.WordWrap
+                                    width: parent.width
+                                }
+                            }
+
+                            Item { height: 4 }
                         }
                     }
                 }
-            }
-        }
-
-        // ── Disabled Generate Report button ───────────────────────────────
-        Item {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.bottomMargin: 20
-            width: root.width * 0.4
-            height: 50
-
-            Rectangle {
-                anchors.fill: parent
-                radius: 10
-                color: Qt.rgba(1, 1, 1, 0.04)
-                border.color: Qt.rgba(1, 1, 1, 0.10); border.width: 1
-                opacity: 0.5
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Generate Report"
-                    color: Qt.rgba(1, 1, 1, 0.5)
-                    font.pixelSize: 16; font.bold: true; font.family: "DejaVu Sans"
-                }
-            }
-
-            ToolTip.visible: disabledHover.containsMouse
-            ToolTip.text: root.buttonTooltip
-
-            MouseArea {
-                id: disabledHover
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.ForbiddenCursor
             }
         }
     }
