@@ -26,6 +26,78 @@ Page {
     property int  tapCount:    0
     property bool devUnlocked: false
 
+    // ── Report generation state ──────────────────────────────────────────
+    property bool   reportLoading:  false
+    property string reportError:    ""
+    property var    cachedDtcs:     []
+    property bool   awaitingDtcs:   false
+
+    Timer {
+        id: dtcWaitTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            root.awaitingDtcs = false
+            if (VehicleDataProvider.latestDtcs.length > 0) {
+                root.cachedDtcs = VehicleDataProvider.latestDtcs
+                root._sendReportRequest()
+            } else {
+                root.reportLoading = false
+                root.reportError   = "No DTC data available"
+            }
+        }
+    }
+
+    Connections {
+        target: VehicleDataProvider
+        function onLatestDtcsChanged() {
+            if (!root.awaitingDtcs) return
+            root.awaitingDtcs = false
+            dtcWaitTimer.stop()
+            root.cachedDtcs = VehicleDataProvider.latestDtcs
+            root._sendReportRequest()
+        }
+        function onReportResultChanged() {
+            const r = VehicleDataProvider.reportResult
+            if (!r || !root.reportLoading) return
+            root.reportLoading = false
+            if (r.ok) {
+                root.reportError = ""
+                if (root.nav)
+                    root.nav.push(Qt.resolvedUrl("ReportScreen.qml"),
+                                  { nav: root.nav, reportData: r.report })
+            } else {
+                root.reportError = r.error || "Report generation failed"
+            }
+        }
+    }
+
+    function _sendReportRequest() {
+        const profile = {}  // UserProfile not always available — keep it simple
+        const payload = {
+            dtcs:    root.cachedDtcs,
+            vehicle: { make: "Unknown", model: "Unknown" },
+            driver:  {}
+        }
+        VehicleDataProvider.sendCommand({ cmd: "server_request_report", payload: payload })
+    }
+
+    function startReport() {
+        if (root.reportLoading) return
+        root.reportError   = ""
+        root.reportLoading = true
+
+        if (VehicleDataProvider.latestDtcs.length > 0) {
+            root.cachedDtcs = VehicleDataProvider.latestDtcs
+            root._sendReportRequest()
+        } else {
+            // Query DTCs first, wait up to 5s
+            root.awaitingDtcs = true
+            VehicleDataProvider.sendCommand({ cmd: "esp32_query_dtc" })
+            dtcWaitTimer.restart()
+        }
+    }
+
     Timer {
         id: tapResetTimer
         interval: 3000
@@ -235,6 +307,7 @@ Page {
             Layout.fillHeight: true
 
             Row {
+                id: cardRow
                 anchors.centerIn: parent
                 spacing: 32
 
@@ -315,15 +388,35 @@ Page {
                         font.family: "DejaVu Sans"
                     }
 
+                    // Loading overlay
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: Qt.rgba(0, 0, 0, 0.65)
+                        visible: root.reportLoading
+
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 12
+                            BusyIndicator {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                running: root.reportLoading
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: "Generating report..."
+                                color: "white"
+                                font.pixelSize: 14; font.family: "DejaVu Sans"
+                            }
+                        }
+                    }
+
                     MouseArea {
                         id: reportHover
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.nav)
-                                root.nav.push(Qt.resolvedUrl("ReportScreen.qml"), { nav: root.nav })
-                        }
+                        onClicked: root.startReport()
                     }
                 }
 
@@ -333,6 +426,7 @@ Page {
                     width: root.width * 0.35
                     height: 220
                     radius: 16
+                    opacity: 0.45
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "#111F1E" }
                         GradientStop { position: 0.5; color: "#0E1418" }
@@ -346,6 +440,21 @@ Page {
 
                     scale: liveHover.pressed ? 0.98 : (liveHover.containsMouse ? 1.02 : 1.0)
                     Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                    Rectangle {
+                        anchors.top: parent.top; anchors.right: parent.right
+                        anchors.topMargin: 12; anchors.rightMargin: 12
+                        width: 100; height: 24; radius: 12
+                        color: Qt.rgba(1, 1, 1, 0.08)
+                        border.color: Qt.rgba(1, 1, 1, 0.20); border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Coming soon"
+                            color: Qt.rgba(1, 1, 1, 0.50)
+                            font.pixelSize: 11; font.family: "DejaVu Sans"
+                        }
+                    }
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -408,13 +517,22 @@ Page {
                         id: liveHover
                         anchors.fill: parent
                         hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.nav)
-                                root.nav.push(Qt.resolvedUrl("LiveSessionScreen.qml"), { nav: root.nav })
-                        }
+                        cursorShape: Qt.ArrowCursor
+                        onClicked: {}
                     }
                 }
+            }
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: cardRow.bottom
+                anchors.topMargin: 16
+                text: root.reportError
+                visible: root.reportError.length > 0
+                color: "#FF4D6D"
+                font.pixelSize: 14; font.family: "DejaVu Sans"
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
             }
         }
     }
