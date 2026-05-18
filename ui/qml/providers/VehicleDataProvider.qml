@@ -73,6 +73,17 @@ Item {
     // ── Misc ────────────────────────────────────────────────────────────────
     property double lastTs: 0
 
+    // ── ESP32 broadcast reply data ──────────────────────────────────────────
+    property var    latestDtcs:       []      // populated from {type:"dtc"} frames
+    property string clearDtcResult:   ""      // populated from {type:"clear_dtc_result"} frames
+    property real   mileageKm:        -1.0    // populated from {type:"mileage_response"} frames
+
+    // ── Server command reply data ───────────────────────────────────────────
+    property bool   serverCheckOk:    false
+    property string serverCheckError: ""
+    property var    dtcLookupResult:  null    // {code, kind, text, error}
+    property var    reportResult:     null    // {ok, report, error}
+
     // ── Stale data detection (Phase 3.0a) ───────────────────────────────────
     // dataStale becomes true when 3 s pass with no telemetry frame in ELM mode.
     // Drive.qml uses this to show the "Waiting for OBD-II device" banner.
@@ -153,6 +164,14 @@ Item {
     //   The backend hot-swaps providers. The next JSON frame will carry
     //   the new status ("mock" or "elm"), which updates dataMode here.
     //
+    function sendCommand(obj) {
+        if (!connected) {
+            console.warn("[VehicleDataProvider] sendCommand: not connected")
+            return
+        }
+        ws.sendTextMessage(JSON.stringify(obj))
+    }
+
     function sendModeCommand(mode) {
         if (!connected) {
             console.warn("[VehicleDataProvider] sendModeCommand: not connected, ignoring")
@@ -207,7 +226,36 @@ Item {
             let obj
             try { obj = JSON.parse(message) } catch (e) { return }
 
-            // Throttle — skip frame if we updated too recently
+            // ── Broadcast event frames — always process, no throttle ───────
+            if (obj.type === "dtc") {
+                root.latestDtcs = obj.codes || []
+                return
+            }
+            if (obj.type === "clear_dtc_result") {
+                root.clearDtcResult = obj.ok
+                    ? "Cleared " + (obj.count || 0) + " codes ✓"
+                    : (obj.error || "Clear failed")
+                return
+            }
+            if (obj.type === "mileage_response") {
+                root.mileageKm = Number(obj.mileage_km !== undefined ? obj.mileage_km : -1.0)
+                return
+            }
+            if (obj.type === "server_check_result") {
+                root.serverCheckOk    = !!obj.ok
+                root.serverCheckError = obj.error || ""
+                return
+            }
+            if (obj.type === "dtc_lookup_result") {
+                root.dtcLookupResult = { code: obj.code, kind: obj.kind, text: obj.text || "", error: obj.error || "" }
+                return
+            }
+            if (obj.type === "report_result") {
+                root.reportResult = { ok: !!obj.ok, report: obj.report || null, error: obj.error || "" }
+                return
+            }
+
+            // ── Telemetry frames — throttled at 20 Hz ─────────────────────
             const nowMs = Date.now()
             if (nowMs - root._lastUiUpdateMs < root.uiUpdateMinMs) return
             root._lastUiUpdateMs = nowMs
@@ -217,24 +265,7 @@ Item {
                 console.log("[VehicleDataProvider] first frame — status:", obj.status)
             }
 
-            // ── Telemetry fields ───────────────────────────────────────────
-            if (obj.ts            !== undefined) root.lastTs       = Number(obj.ts)
-            // Reset stale timer on any telemetry frame with real data fields
-            if (obj.rpm !== undefined || obj.speed_kph !== undefined) {
-                root.dataStale = false
-                root._sourceHelloReceived = true   // heuristic: data flowing = source connected
-                staleTimer.restart()
-            }
-            if (obj.rpm           !== undefined) root.rpm          = Number(obj.rpm)
-            if (obj.speed_kph     !== undefined) root.speedKph     = Number(obj.speed_kph)
-            if (obj.coolant_c     !== undefined) root.coolantC     = Number(obj.coolant_c)
-            if (obj.throttle_pct  !== undefined) root.throttlePct  = Number(obj.throttle_pct)
-            if (obj.engine_load   !== undefined) root.engineLoad   = Number(obj.engine_load)
-            if (obj.battery_v     !== undefined) root.batteryV     = Number(obj.battery_v)
-            if (obj.fuel_level    !== undefined) root.fuelLevel    = Number(obj.fuel_level)
-            if (obj.intake_temp_c !== undefined) root.intakeTempC  = Number(obj.intake_temp_c)
-
-            // ── Mode confirmation ──────────────────────────────────────────
+            // ── Mode confirmation (FIRST so telemetry can override _sourceHelloReceived) ──
             // obj.status is "mock" or "elm" — this drives the UI toggle and badge
             if (obj.status !== undefined) {
                 const newMode = String(obj.status)
@@ -260,6 +291,23 @@ Item {
                     switchTimeout.stop()
                 }
             }
+
+            // ── Telemetry fields (AFTER status, so _sourceHelloReceived wins) ──
+            if (obj.ts !== undefined) root.lastTs = Number(obj.ts)
+            // Reset stale timer on any telemetry frame with real data fields
+            if (obj.rpm !== undefined || obj.speed_kph !== undefined) {
+                root.dataStale            = false
+                root._sourceHelloReceived = true   // heuristic: data flowing = source connected
+                staleTimer.restart()
+            }
+            if (obj.rpm           !== undefined) root.rpm         = Number(obj.rpm)
+            if (obj.speed_kph     !== undefined) root.speedKph    = Number(obj.speed_kph)
+            if (obj.coolant_c     !== undefined) root.coolantC    = Number(obj.coolant_c)
+            if (obj.throttle_pct  !== undefined) root.throttlePct = Number(obj.throttle_pct)
+            if (obj.engine_load   !== undefined) root.engineLoad  = Number(obj.engine_load)
+            if (obj.battery_v     !== undefined) root.batteryV    = Number(obj.battery_v)
+            if (obj.fuel_level    !== undefined) root.fuelLevel   = Number(obj.fuel_level)
+            if (obj.intake_temp_c !== undefined) root.intakeTempC = Number(obj.intake_temp_c)
 
             // ── Warning flags ──────────────────────────────────────────────
             if (obj.warnings) {
