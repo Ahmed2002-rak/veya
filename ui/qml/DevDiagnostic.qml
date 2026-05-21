@@ -113,6 +113,37 @@ Page {
     // ── DTC model (populated in mock mode by "Read DTC") ─────────────────
     ListModel { id: dtcModel }
 
+    // Sync dtcModel with VehicleDataProvider.latestDtcs whenever it changes
+    Connections {
+        target: VehicleDataProvider
+        function onLatestDtcsChanged() {
+            dtcModel.clear()
+            const dtcs = VehicleDataProvider.latestDtcs
+            for (let i = 0; i < dtcs.length; i++) {
+                dtcModel.append({
+                    code: dtcs[i].code || "???",
+                    desc: dtcs[i].status || ""
+                })
+            }
+            if (dtcs.length > 0)
+                root.appendLine("[esp32] " + dtcs.length + " DTC(s) received")
+        }
+    }
+
+    Connections {
+        target: VehicleDataProvider
+        function onClearDtcResultChanged() {
+            const r = VehicleDataProvider.clearDtcResult
+            if (r.length > 0)
+                root.appendLine("[esp32] Clear result: " + r)
+        }
+        function onMileageKmChanged() {
+            const km = VehicleDataProvider.mileageKm
+            if (km >= 0)
+                root.appendLine("[esp32] Mileage: " + Math.round(km).toLocaleString() + " km")
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     //  MAIN LAYOUT
     // ══════════════════════════════════════════════════════════════════════
@@ -345,24 +376,8 @@ Page {
                                 font: parent.font
                             }
                             onClicked: {
-                                if (VehicleDataProvider.dataMode === "mock") {
-                                    dtcModel.clear()
-                                    dtcModel.append({
-                                        code: "P0300",
-                                        desc: "Random/Multiple Cylinder Misfire"
-                                    })
-                                    dtcModel.append({
-                                        code: "P0420",
-                                        desc: "Catalyst System Efficiency Below Threshold"
-                                    })
-                                    dtcModel.append({
-                                        code: "P0171",
-                                        desc: "System Too Lean (Bank 1)"
-                                    })
-                                    appendLine("[mock] 3 codes read")
-                                } else {
-                                    appendLine("Feature available after backend update — REAL DTC reading reserved for Phase 3.")
-                                }
+                                appendLine("Querying DTC from ESP32...")
+                                VehicleDataProvider.sendCommand({ "cmd": "esp32_query_dtc" })
                             }
                         }
 
@@ -387,8 +402,34 @@ Page {
                                 font: parent.font
                             }
                             onClicked: {
-                                dtcModel.clear()
-                                appendLine("DTC list cleared")
+                                appendLine("Clearing DTCs on ESP32...")
+                                VehicleDataProvider.sendCommand({ "cmd": "esp32_clear_dtc" })
+                            }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            text: "Read Mileage"
+                            font.family: "DejaVu Sans"
+                            font.bold: true
+                            background: Rectangle {
+                                radius: 8
+                                color: parent.hovered ? Qt.rgba(1, 0.851, 0.298, 0.18)
+                                                      : Qt.rgba(1, 0.851, 0.298, 0.10)
+                                border.color: "#FFD84D"; border.width: 1
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#FFD84D"
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                font: parent.font
+                            }
+                            onClicked: {
+                                root.appendLine("Querying mileage from ESP32...")
+                                VehicleDataProvider.sendCommand({ "cmd": "esp32_query_mileage" })
                             }
                         }
                     }
@@ -496,6 +537,43 @@ Page {
                             unit:  "°C"
                             accent: root.cCyan
                         }
+                    }
+
+                    // ESP32 result strip (shows latest DTC count, clear result, mileage)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Text {
+                            text: "DTCs: " + (VehicleDataProvider.latestDtcs.length > 0
+                                  ? VehicleDataProvider.latestDtcs.length + " code(s)"
+                                  : "—")
+                            color: VehicleDataProvider.latestDtcs.length > 0 ? "#FF4D6D" : Qt.rgba(1,1,1,0.45)
+                            font.pixelSize: 12
+                            font.family: "DejaVu Sans"
+                        }
+
+                        Text { text: "·"; color: Qt.rgba(1,1,1,0.3); font.pixelSize: 12; font.family: "DejaVu Sans" }
+
+                        Text {
+                            text: "Clear: " + (VehicleDataProvider.clearDtcResult.length > 0
+                                  ? VehicleDataProvider.clearDtcResult : "—")
+                            color: VehicleDataProvider.clearDtcResult.length > 0 ? "#7CFF4A" : Qt.rgba(1,1,1,0.45)
+                            font.pixelSize: 12
+                            font.family: "DejaVu Sans"
+                        }
+
+                        Text { text: "·"; color: Qt.rgba(1,1,1,0.3); font.pixelSize: 12; font.family: "DejaVu Sans" }
+
+                        Text {
+                            text: "Mileage: " + (VehicleDataProvider.mileageKm >= 0
+                                  ? Math.round(VehicleDataProvider.mileageKm).toLocaleString() + " km" : "—")
+                            color: VehicleDataProvider.mileageKm >= 0 ? "#4DD2FF" : Qt.rgba(1,1,1,0.45)
+                            font.pixelSize: 12
+                            font.family: "DejaVu Sans"
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
 
                     // Console output area (was id: console — now id: outputArea)

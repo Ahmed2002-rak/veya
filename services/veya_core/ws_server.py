@@ -45,6 +45,7 @@ Incoming UI commands:
     {"cmd": "esp32_query_dtc"}      ← Phase 3.0e: routes query_dtc to ESP32 via TCP
     {"cmd": "esp32_clear_dtc"}      ← Phase 3.0e: routes clear_dtc to ESP32 via TCP
     {"cmd": "esp32_query_mileage"}  ← Phase 3.0e: routes query_mileage to ESP32 via TCP
+    {"cmd": "load_sample_report"}   ← Phase 3.0g: injects hardcoded demo report_result
 
 Note: the new source-facing protocol (contract.py) is unrelated to this
 file. Translation happens in core.py.
@@ -273,6 +274,19 @@ class UiWebSocketServer:
                         await self._on_ui_command({"cmd": "esp32_query_mileage"})
                     except Exception:
                         log.exception("[ws] on_ui_command callback raised")
+                # ── Server API commands (Phase 3.1) ──────────────────────────────
+                elif obj.get("cmd") == "server_check":
+                    asyncio.create_task(self._handle_server_check())
+                elif obj.get("cmd") == "server_lookup_dtc":
+                    code = obj.get("code", "")
+                    kind = obj.get("kind", "signification")
+                    asyncio.create_task(self._handle_server_lookup_dtc(code, kind))
+                elif obj.get("cmd") == "server_request_report":
+                    payload = obj.get("payload", {})
+                    asyncio.create_task(self._handle_server_request_report(payload))
+                elif obj.get("cmd") == "load_sample_report":
+                    log.info("[ws] ← load_sample_report from %s", peer)
+                    asyncio.create_task(self._handle_load_sample_report())
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -708,6 +722,100 @@ class UiWebSocketServer:
                         pass
                 log.info("[ws] bt_bridge stopped")
             _bt_bridge_proc = None
+
+    # ── Server API handlers (Phase 3.1) ──────────────────────────────────────
+
+    async def _handle_server_check(self) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import server_client as _sc
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _sc.server_check),
+                timeout=10.0,
+            )
+            await self.broadcast_event({
+                "type":  "server_check_result",
+                "ok":    result.get("ok", False),
+                "error": result.get("error", ""),
+            })
+            log.info("[ws] server_check ok=%s", result.get("ok"))
+        except asyncio.TimeoutError:
+            await self.broadcast_event({"type": "server_check_result", "ok": False,
+                                        "error": "timeout"})
+        except Exception as exc:
+            log.error("[ws] server_check failed: %s", exc)
+            await self.broadcast_event({"type": "server_check_result", "ok": False,
+                                        "error": str(exc)})
+
+    async def _handle_server_lookup_dtc(self, code: str, kind: str) -> None:
+        import functools
+        loop = asyncio.get_running_loop()
+        try:
+            from services.veya_core.helpers import server_client as _sc
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, functools.partial(_sc.lookup_dtc, code, kind)),
+                timeout=10.0,
+            )
+            await self.broadcast_event({
+                "type":  "dtc_lookup_result",
+                "code":  code,
+                "kind":  kind,
+                "text":  result.get("text", ""),
+                "error": result.get("error", ""),
+            })
+            log.info("[ws] server_lookup_dtc code=%r kind=%r ok=%s", code, kind, result.get("ok"))
+        except asyncio.TimeoutError:
+            await self.broadcast_event({"type": "dtc_lookup_result", "code": code, "kind": kind,
+                                        "text": "", "error": "timeout"})
+        except Exception as exc:
+            log.error("[ws] server_lookup_dtc failed: %s", exc)
+            await self.broadcast_event({"type": "dtc_lookup_result", "code": code, "kind": kind,
+                                        "text": "", "error": str(exc)})
+
+    async def _handle_server_request_report(self, payload: dict) -> None:
+        import functools
+        loop = asyncio.get_running_loop()
+        log.info("[ws] server_request_report payload from UI: %s",
+                 json.dumps(payload, ensure_ascii=False))
+        try:
+            from services.veya_core.helpers import server_client as _sc
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, functools.partial(_sc.request_report, payload)),
+                timeout=35.0,
+            )
+            log.info("[ws] server_request_report result: ok=%s error=%r message=%r",
+                     result.get("ok"), result.get("error"), result.get("message"))
+            await self.broadcast_event({
+                "type":    "report_result",
+                "ok":      result.get("ok", False),
+                "report":  result.get("report"),
+                "error":   result.get("error", ""),
+                "message": result.get("message", ""),
+            })
+        except asyncio.TimeoutError:
+            await self.broadcast_event({"type": "report_result", "ok": False, "report": None,
+                                        "error": "timeout", "message": ""})
+        except Exception as exc:
+            log.error("[ws] server_request_report failed: %s", exc)
+            await self.broadcast_event({"type": "report_result", "ok": False, "report": None,
+                                        "error": str(exc), "message": ""})
+
+    async def _handle_load_sample_report(self) -> None:
+        try:
+            from services.veya_core.helpers.sample_report import get_sample_report
+            report = get_sample_report()
+            await self.broadcast_event({
+                "type":    "report_result",
+                "ok":      True,
+                "report":  report,
+                "error":   None,
+                "message": None,
+            })
+            log.info("[ws] load_sample_report → broadcasted report_id=%s", report.get("report_id"))
+        except Exception as exc:
+            log.error("[ws] load_sample_report failed: %s", exc)
+            await self.broadcast_event({"type": "report_result", "ok": False, "report": None,
+                                        "error": str(exc), "message": ""})
 
     # ── Utility ───────────────────────────────────────────────────────────────
 

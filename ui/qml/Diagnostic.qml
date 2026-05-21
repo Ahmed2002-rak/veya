@@ -26,6 +26,114 @@ Page {
     property int  tapCount:    0
     property bool devUnlocked: false
 
+    // ── Report generation state ──────────────────────────────────────────
+    property bool   reportLoading:  false
+    property string reportError:    ""
+    property var    cachedDtcs:     []
+    property bool   awaitingDtcs:   false
+
+    Timer {
+        id: dtcWaitTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            root.awaitingDtcs = false
+            if (VehicleDataProvider.latestDtcs.length > 0) {
+                root.cachedDtcs = VehicleDataProvider.latestDtcs
+                root._sendReportRequest()
+            } else {
+                root.reportLoading = false
+                root.reportError   = "No DTC data available"
+            }
+        }
+    }
+
+    Connections {
+        target: VehicleDataProvider
+        function onLatestDtcsChanged() {
+            if (!root.awaitingDtcs) return
+            root.awaitingDtcs = false
+            dtcWaitTimer.stop()
+            root.cachedDtcs = VehicleDataProvider.latestDtcs
+            root._sendReportRequest()
+        }
+        function onReportResultChanged() {
+            const r = VehicleDataProvider.reportResult
+            if (!r || !root.reportLoading) return
+            reportTimeoutTimer.stop()
+            root.reportLoading = false
+            if (r.ok) {
+                root.reportError = ""
+                if (root.nav)
+                    root.nav.push(Qt.resolvedUrl("ReportScreen.qml"),
+                                  { nav: root.nav, reportData: r.report })
+            } else {
+                root.reportError = r.message || r.error || "Une erreur s'est produite"
+            }
+        }
+    }
+
+    Timer {
+        id: reportTimeoutTimer
+        interval: 35000
+        repeat: false
+        running: false
+        onTriggered: {
+            if (root.reportLoading) {
+                root.reportLoading = false
+                root.reportError   = "La requête a expiré — réessayez"
+            }
+        }
+    }
+
+    function _sendReportRequest() {
+        const now    = new Date()
+        const tsIso  = now.toISOString().replace(/\.\d+Z$/, "Z")
+        const make   = (UserProfile.carMake   || "").trim() || "Renault"
+        const model  = (UserProfile.carModel  || "").trim() || "Symbol"
+        const year   = parseInt(UserProfile.carYear) || 2010
+        const name   = (UserProfile.driverName || "").trim() || "Demo"
+        const vin    = (UserProfile.carVIN || "").trim() || null
+        const mileage = VehicleDataProvider.mileageKm >= 0 ? VehicleDataProvider.mileageKm : null
+
+        const payload = {
+            schema:       1,
+            request_type: "diagnostic_report",
+            ts_iso:       tsIso,
+            vehicle: {
+                make:       make,
+                model:      model,
+                year:       year,
+                vin:        vin,
+                mileage_km: mileage
+            },
+            driver: {
+                name:     name,
+                language: "fr"
+            },
+            dtcs: root.cachedDtcs || []
+        }
+        console.log("[Diagnostic] _sendReportRequest payload:", JSON.stringify(payload))
+        reportTimeoutTimer.restart()
+        VehicleDataProvider.sendCommand({ cmd: "server_request_report", payload: payload })
+    }
+
+    function startReport() {
+        if (root.reportLoading) return
+        root.reportError   = ""
+        root.reportLoading = true
+
+        if (VehicleDataProvider.latestDtcs.length > 0) {
+            root.cachedDtcs = VehicleDataProvider.latestDtcs
+            root._sendReportRequest()
+        } else {
+            // Query DTCs first, wait up to 5s
+            root.awaitingDtcs = true
+            VehicleDataProvider.sendCommand({ cmd: "esp32_query_dtc" })
+            dtcWaitTimer.restart()
+        }
+    }
+
     Timer {
         id: tapResetTimer
         interval: 3000
@@ -235,6 +343,7 @@ Page {
             Layout.fillHeight: true
 
             Row {
+                id: cardRow
                 anchors.centerIn: parent
                 spacing: 32
 
@@ -315,15 +424,35 @@ Page {
                         font.family: "DejaVu Sans"
                     }
 
+                    // Loading overlay
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        color: Qt.rgba(0, 0, 0, 0.65)
+                        visible: root.reportLoading
+
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 12
+                            BusyIndicator {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                running: root.reportLoading
+                            }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: "Generating report..."
+                                color: "white"
+                                font.pixelSize: 14; font.family: "DejaVu Sans"
+                            }
+                        }
+                    }
+
                     MouseArea {
                         id: reportHover
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.nav)
-                                root.nav.push(Qt.resolvedUrl("ReportScreen.qml"), { nav: root.nav })
-                        }
+                        onClicked: root.startReport()
                     }
                 }
 
@@ -333,6 +462,7 @@ Page {
                     width: root.width * 0.35
                     height: 220
                     radius: 16
+                    opacity: 0.45
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "#111F1E" }
                         GradientStop { position: 0.5; color: "#0E1418" }
@@ -346,6 +476,21 @@ Page {
 
                     scale: liveHover.pressed ? 0.98 : (liveHover.containsMouse ? 1.02 : 1.0)
                     Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                    Rectangle {
+                        anchors.top: parent.top; anchors.right: parent.right
+                        anchors.topMargin: 12; anchors.rightMargin: 12
+                        width: 100; height: 24; radius: 12
+                        color: Qt.rgba(1, 1, 1, 0.08)
+                        border.color: Qt.rgba(1, 1, 1, 0.20); border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Coming soon"
+                            color: Qt.rgba(1, 1, 1, 0.50)
+                            font.pixelSize: 11; font.family: "DejaVu Sans"
+                        }
+                    }
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -408,11 +553,50 @@ Page {
                         id: liveHover
                         anchors.fill: parent
                         hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.nav)
-                                root.nav.push(Qt.resolvedUrl("LiveSessionScreen.qml"), { nav: root.nav })
-                        }
+                        cursorShape: Qt.ArrowCursor
+                        onClicked: {}
+                    }
+                }
+            }
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: cardRow.bottom
+                anchors.topMargin: 16
+                text: root.reportError
+                visible: root.reportError.length > 0
+                color: "#FF4D6D"
+                font.pixelSize: 14; font.family: "DejaVu Sans"
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+            }
+        }
+
+        // ── Sample demo link ──────────────────────────────────────────────
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 28
+            Layout.bottomMargin: 2
+
+            Text {
+                id: sampleLink
+                anchors.centerIn: parent
+                text: "Voir un exemple →"
+                color: Qt.rgba(0.302, 0.824, 1.0, sampleMouse.containsMouse ? 0.85 : 0.45)
+                font.pixelSize: 12; font.family: "DejaVu Sans"
+                Behavior on color { ColorAnimation { duration: 150 } }
+
+                MouseArea {
+                    id: sampleMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (root.reportLoading) return
+                        root.reportError   = ""
+                        root.reportLoading = true
+                        reportTimeoutTimer.restart()
+                        VehicleDataProvider.sendCommand({ cmd: "load_sample_report" })
                     }
                 }
             }
