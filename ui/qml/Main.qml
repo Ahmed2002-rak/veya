@@ -73,10 +73,30 @@ ApplicationWindow {
     }
 
     // ── Splash / routing page (inline) ───────────────────────────────────
-    // Shown for ≤ 1 s while UserProfile loads from disk, then replaced
-    // by either WelcomeOnboarding (first launch) or Home (returning user).
+    // Shown for ≥ 3 s (minimum) and ≤ 5 s (safety-net hard cap) while
+    // UserProfile loads from disk, then replaced by Home or WelcomeOnboarding.
     component SplashScreen: Item {
+        id: splash
         property var nav: null
+
+        // Navigation is gated on BOTH conditions being true.
+        property bool _profileReady:   false
+        property bool _minTimeElapsed: false
+        property bool _alreadyRouted:  false
+
+        function _tryRoute() {
+            if (_alreadyRouted)   return
+            if (!_profileReady)   return
+            if (!_minTimeElapsed) return
+            _alreadyRouted = true
+            Qt.callLater(function() {
+                if (UserProfile.profileExists) {
+                    nav.replace(null, Qt.resolvedUrl("Home.qml"), { nav: nav })
+                } else {
+                    nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
+                }
+            })
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -104,32 +124,34 @@ ApplicationWindow {
             }
         }
 
-        // Route once UserProfile finishes loading
+        // Minimum display time: splash stays visible for at least 3 s.
+        Timer {
+            interval: 3000
+            running: true
+            repeat: false
+            onTriggered: {
+                splash._minTimeElapsed = true
+                splash._tryRoute()
+            }
+        }
+
+        // Route once UserProfile finishes loading (gated by _minTimeElapsed).
         Connections {
             target: UserProfile
             function onLoadingChanged() {
                 if (UserProfile.loading) return
-                Qt.callLater(function() {
-                    if (UserProfile.profileExists) {
-                        nav.replace(null, Qt.resolvedUrl("Home.qml"), { nav: nav })
-                    } else {
-                        nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
-                    }
-                })
+                splash._profileReady = true
+                splash._tryRoute()
             }
         }
 
         // Safety net: if profile was already loaded synchronously before
-        // Connections was ready, route immediately on component completion.
+        // Connections was ready, mark ready now (3 s timer will finish routing).
         Component.onCompleted: {
             if (!UserProfile.loading) {
-                Qt.callLater(function() {
-                    if (UserProfile.profileExists) {
-                        nav.replace(null, Qt.resolvedUrl("Home.qml"), { nav: nav })
-                    } else {
-                        nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
-                    }
-                })
+                splash._profileReady = true
+                // Don't call _tryRoute() here — _minTimeElapsed is still false.
+                // The 3 s timer will call _tryRoute() once it fires.
             }
         }
 
@@ -140,8 +162,9 @@ ApplicationWindow {
             running: true
             repeat: false
             onTriggered: {
-                if (UserProfile.loading) {
+                if (!splash._alreadyRouted) {
                     console.warn("[Main] UserProfile load timeout — forcing onboarding")
+                    splash._alreadyRouted = true
                     nav.replace(null, Qt.resolvedUrl("onboarding/WelcomeOnboarding.qml"), { nav: nav })
                 }
             }

@@ -138,41 +138,95 @@ def run(mac: str, tcp_host: str, tcp_port: int, rfcomm_channel: int) -> int:
     """Main bridge loop. Returns exit code."""
     log.info("[bridge] Starting — ESP32 MAC=%s TCP=%s:%d RFCOMM ch=%d",
              mac, tcp_host, tcp_port, rfcomm_channel)
+    # Clear any stale "connected" left by a previous crash so the ws_server
+    # watcher never auto-switches to REAL based on stale file content.
+    _write_bt_status("disconnected")
 
     while True:
-        # ── 1. Connect to TCP core ─────────────────────────────────────────
-        try:
-            tcp_sock = _connect_tcp(tcp_host, tcp_port)
-        except Exception as exc:
-            log.error("[bridge] Cannot reach TCP core %s:%d: %s", tcp_host, tcp_port, exc)
-            log.info("[bridge] TCP core unavailable — exiting cleanly")
-            _write_bt_status("disconnected")
-            return 0
-
-        # ── 2. Connect to ESP32 over BT RFCOMM ────────────────────────────
-        bt_sock = None
+        # ── 1. Connect to ESP32 over BT RFCOMM (BT FIRST) ────────────────
+        # Do NOT touch TCP until BT succeeds — core must not see a source
+        # connection while we have no real telemetry, as that would kill
+        # mock_source and leave the dashboard with dead gauges (state-B bug).
         try:
             bt_sock = _connect_bt(mac, rfcomm_channel)
         except Exception as exc:
             log.warning("[bridge] BT connect failed (%s) — will retry in %ds", exc, _BT_RECONNECT_SLEEP)
-            tcp_sock.close()
             time.sleep(_BT_RECONNECT_SLEEP)
             continue
 
+        # ── 2. Signal "connected" BEFORE opening TCP ──────────────────────
+        # ws_server watcher reads this file to trigger B→C state transition
+        # (kill mock_source, accept REAL source). Writing before TCP open
+        # ensures the state machine sees the correct signal order.
         _write_bt_status("connected")
 
-        # ── 3. Bidirectional forward ───────────────────────────────────────
-        reason = _forward(bt_sock, tcp_sock)
-        log.info("[bridge] Forward ended: %s", reason)
+        # ── 3. Connect to TCP core (with retry for state-B→C race) ─────────
+        # TcpSourceServer accepts the TCP handshake even when a source is
+        # already connected, then immediately sends a mode_error frame and
+        # closes the connection — _forward() returns "tcp_closed" in ~100 ms.
+        # We detect this by elapsed time: if < 2 s we were rejected (mock
+        # still holds the slot). Keep BT open and retry until ws_server's
+        # watcher kills mock (~1-3 s after it reads the "connected" file).
+        _TCP_SLOT_BUDGET   = 15.0   # total seconds to wait for the slot
+        _TCP_SLOT_INTERVAL = 1.0    # seconds between retries
+        slot_deadline = time.monotonic() + _TCP_SLOT_BUDGET
+        reason = "tcp_closed"
+
+        while True:
+            try:
+                tcp_sock = _connect_tcp(tcp_host, tcp_port)
+            except (ConnectionRefusedError, OSError) as exc:
+                if time.monotonic() < slot_deadline:
+                    log.info("[bridge] TCP unreachable (%s) — retry in %.0fs",
+                             exc, _TCP_SLOT_INTERVAL)
+                    _write_bt_status("connected")   # keep watcher triggered
+                    time.sleep(_TCP_SLOT_INTERVAL)
+                    continue
+                log.error("[bridge] TCP core unreachable after %.0fs — exiting",
+                          _TCP_SLOT_BUDGET)
+                _write_bt_status("disconnected")
+                bt_sock.close()
+                return 0
+
+            # ── 4. Bidirectional forward ───────────────────────────────────
+            connect_time = time.monotonic()
+            reason = _forward(bt_sock, tcp_sock)
+            elapsed = time.monotonic() - connect_time
+            log.info("[bridge] Forward ended: %s (elapsed=%.2fs)", reason, elapsed)
+
+            # Close TCP first so core's "source disconnect" fires immediately
+            # and respawns mock_source — this is the C→B state machine transition.
+            try:
+                tcp_sock.close()
+            except Exception:
+                pass
+
+            if reason == "tcp_closed" and elapsed < 2.0:
+                # Immediate close = TcpSourceServer rejected us because
+                # mock_source still holds the slot. Wait for ws_server
+                # watcher to kill mock, then retry.
+                if time.monotonic() < slot_deadline:
+                    log.info("[bridge] TCP slot busy (rejected in %.2fs) — "
+                             "waiting %.0fs then retry",
+                             elapsed, _TCP_SLOT_INTERVAL)
+                    _write_bt_status("connected")   # re-ping watcher
+                    time.sleep(_TCP_SLOT_INTERVAL)
+                    continue
+                log.error("[bridge] TCP slot not freed within %.0fs budget — exiting",
+                          _TCP_SLOT_BUDGET)
+                _write_bt_status("disconnected")
+                bt_sock.close()
+                return 0
+
+            # Real session ended — exit the TCP retry loop.
+            break
 
         _write_bt_status("disconnected")
 
-        # Clean up both sockets
-        for sock in (bt_sock, tcp_sock):
-            try:
-                sock.close()
-            except Exception:
-                pass
+        try:
+            bt_sock.close()
+        except Exception:
+            pass
 
         if reason == "tcp_closed":
             log.info("[bridge] Core TCP closed — exiting cleanly")
@@ -180,7 +234,7 @@ def run(mac: str, tcp_host: str, tcp_port: int, rfcomm_channel: int) -> int:
         elif reason == "bt_closed":
             log.info("[bridge] ESP32 BT disconnected — will retry in %ds", _BT_RECONNECT_SLEEP)
             time.sleep(_BT_RECONNECT_SLEEP)
-            # loop and reconnect
+            # loop back to BT-only retry — do NOT immediately reopen TCP
         else:
             log.warning("[bridge] Unexpected reason=%s — retrying in %ds", reason, _BT_RECONNECT_SLEEP)
             time.sleep(_BT_RECONNECT_SLEEP)

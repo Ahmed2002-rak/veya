@@ -25,6 +25,7 @@ from . import contract
 log = logging.getLogger(__name__)
 
 FrameCallback = Callable[[Dict[str, Any]], Awaitable[None]]
+DisconnectCallback = Callable[[Optional[str]], Awaitable[None]]
 
 
 class TcpSourceServer:
@@ -43,10 +44,12 @@ class TcpSourceServer:
         host: str,
         port: int,
         on_frame: FrameCallback,
+        on_disconnect: Optional[DisconnectCallback] = None,
     ) -> None:
         self.host = host
         self.port = port
         self._on_frame = on_frame
+        self._on_disconnect = on_disconnect
 
         self._server: Optional[asyncio.base_events.Server] = None
         self._writer: Optional[asyncio.StreamWriter] = None
@@ -187,6 +190,7 @@ class TcpSourceServer:
             raise
         finally:
             log.info("[tcp] - source disconnected (%s)", peer_str)
+            disconnected_kind = self._source_kind  # capture before clearing
             self._writer = None
             self._peer   = None
             self._source_id   = None
@@ -196,6 +200,11 @@ class TcpSourceServer:
                 await writer.wait_closed()
             except Exception:
                 pass
+            if self._on_disconnect is not None:
+                try:
+                    await self._on_disconnect(disconnected_kind)
+                except Exception:
+                    log.exception("[tcp] on_disconnect callback raised")
 
     @staticmethod
     async def _send_error(writer: asyncio.StreamWriter, reason: str) -> None:
