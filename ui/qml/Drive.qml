@@ -301,21 +301,26 @@ Page {
             }
         }
 
-        // ── OBD-II source banner (Phase 3.0b) ───────────────────────────────
-        // Three-state banner driven by VehicleDataProvider.sourceState:
-        //   "ok"           — hidden (mock mode or live telemetry flowing)
-        //   "waiting"      — amber: no source connected at all
-        //   "no_telemetry" — cyan: source connected but no data yet (zero gauges)
+        // ── OBD-II source banner (Phase 3.0b / 3.0h) ────────────────────────
+        // Visible in three situations:
+        //   sourceState "waiting"      — ELM mode, no source at all (amber)
+        //   sourceState "no_telemetry" — ELM mode, source seen but stale (cyan)
+        //   waitingForBt true          — mock mode, bridge alive but not yet
+        //                                connected to ESP32 (amber)
         Rectangle {
             id: sourceBanner
             Layout.fillWidth: true
-            readonly property bool showBanner: VehicleDataProvider.sourceState !== "ok"
+            readonly property bool showBanner:
+                VehicleDataProvider.sourceState !== "ok"
+                || VehicleDataProvider.waitingForBt
+            readonly property bool isCyan:
+                VehicleDataProvider.sourceState === "no_telemetry"
             Layout.preferredHeight: showBanner ? 32 : 0
             visible: showBanner
             clip: true
             radius: 6
-            color: VehicleDataProvider.sourceState === "no_telemetry" ? "#1A2E3A" : "#4A3D1A"
-            border.color: VehicleDataProvider.sourceState === "no_telemetry" ? "#4DD2FF" : "#FFB347"
+            color: isCyan ? "#1A2E3A" : "#4A3D1A"
+            border.color: isCyan ? "#4DD2FF" : "#FFB347"
             border.width: 1
             Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
             Behavior on color        { ColorAnimation { duration: 300 } }
@@ -328,7 +333,7 @@ Page {
                 Rectangle {
                     width: 8; height: 8; radius: 4
                     anchors.verticalCenter: parent.verticalCenter
-                    color: VehicleDataProvider.sourceState === "no_telemetry" ? "#4DD2FF" : "#FFB347"
+                    color: sourceBanner.isCyan ? "#4DD2FF" : "#FFB347"
                     Behavior on color { ColorAnimation { duration: 300 } }
                     SequentialAnimation on opacity {
                         running: sourceBanner.showBanner
@@ -340,10 +345,12 @@ Page {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: VehicleDataProvider.sourceState === "no_telemetry"
+                    text: sourceBanner.isCyan
                           ? "Connected — waiting for data"
-                          : "Waiting for OBD-II device..."
-                    color: VehicleDataProvider.sourceState === "no_telemetry" ? "#4DD2FF" : "#FFB347"
+                          : VehicleDataProvider.waitingForBt
+                            ? "Waiting for OBD device..."
+                            : "Waiting for OBD-II device..."
+                    color: sourceBanner.isCyan ? "#4DD2FF" : "#FFB347"
                     font.pixelSize: 14; font.bold: true
                     font.family: "DejaVu Sans"
                     Behavior on color { ColorAnimation { duration: 300 } }

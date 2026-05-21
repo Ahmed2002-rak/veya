@@ -107,6 +107,12 @@ Item {
         return "ok"
     }
 
+    // ── BT waiting state (Phase 3.0h) ────────────────────────────────────────
+    // True when core is in mock mode but the bt_bridge is running and trying
+    // to connect. Injected into every broadcast frame by ws_server.
+    // Drives the "Waiting for OBD device…" banner in Drive.qml.
+    property bool waitingForBt: false
+
     Timer {
         id: staleTimer
         interval: 3000
@@ -211,6 +217,7 @@ Item {
                 root.dataMode              = "unknown"
                 root._loggedFirstMsg       = false
                 root._sourceHelloReceived  = false
+                root.waitingForBt          = false
                 reconnectTimer.restart()
             }
         }
@@ -292,6 +299,9 @@ Item {
                     switchTimeout.stop()
                 }
             }
+
+            // ── BT waiting state (Phase 3.0h) ────────────────────────────────
+            if (obj.waiting_for_bt !== undefined) root.waitingForBt = !!obj.waiting_for_bt
 
             // ── Telemetry fields (AFTER status, so _sourceHelloReceived wins) ──
             if (obj.ts !== undefined) root.lastTs = Number(obj.ts)

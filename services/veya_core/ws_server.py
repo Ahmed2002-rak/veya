@@ -93,10 +93,13 @@ class UiWebSocketServer:
     WebSocket server for the QML UI.
 
     Construction:
-        UiWebSocketServer(host, port, on_ui_command)
+        UiWebSocketServer(host, port, on_ui_command, core=None)
 
     The `on_ui_command` coroutine is awaited for every command frame
     received from a UI client (currently only `set_mode`).
+
+    `core` is an optional reference to VeyaCore used by the bridge-state
+    watcher to trigger automatic REAL ↔ MOCK transitions.
     """
 
     def __init__(
@@ -104,20 +107,44 @@ class UiWebSocketServer:
         host: str,
         port: int,
         on_ui_command: UiCommandCallback,
+        core: Optional[Any] = None,
     ) -> None:
         self.host = host
         self.port = port
         self._on_ui_command = on_ui_command
+        self._core = core  # VeyaCore reference for auto-transitions
 
         self._server: Optional[Any] = None
         self._clients: Set[Any] = set()
         self._last_broadcast_ts: float = 0.0
+
+        # Mirrors core._user_forced_mock so the watcher can decide locally.
+        self._user_forced_mock: bool = False
+        # Last known bridge state, tracked by _bt_bridge_state_watcher.
+        self._last_bridge_state: str = "disconnected"
+        # Monotonic timestamp of the last bridge-process respawn (0 = never).
+        # Used to enforce a 30-second cooldown so a crash-looping bridge can't
+        # spin at full speed.
+        self._bridge_last_respawn_ts: float = 0.0
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
         self._server = await websockets.serve(self._handle_client, self.host, self.port)
         log.info("[ws] listening on ws://%s:%d", self.host, self.port)
+        # Auto-spawn bridge at boot if a MAC is already configured
+        await self._bt_boot_auto_spawn()
+        # Background watcher: reacts to bridge connecting / disconnecting
+        asyncio.create_task(self._bt_bridge_state_watcher())
+
+    async def _bt_boot_auto_spawn(self) -> None:
+        """Spawn bt_bridge at startup if bt_config.json contains a MAC."""
+        mac = self._bt_read_mac()
+        if not mac:
+            log.info("[ws] boot: no MAC in config, staying in mock mode")
+            return
+        log.info("[ws] boot: spawning bt_bridge for MAC %s", mac)
+        self._bt_start_bridge()
 
     async def stop(self) -> None:
         if self._server is not None:
@@ -138,10 +165,19 @@ class UiWebSocketServer:
 
     # ── Broadcast ────────────────────────────────────────────────────────────
 
+    def _get_waiting_for_bt(self) -> bool:
+        """True when the bridge process is alive but not yet connected to ESP32."""
+        if _bt_bridge_proc is None:
+            return False
+        if _bt_bridge_proc.poll() is not None:
+            return False
+        return self._last_bridge_state == "disconnected"
+
     async def broadcast(self, frame: Dict[str, Any]) -> None:
         """
         Broadcast a UI-format frame to every connected client. Drops the
         frame if the previous broadcast was less than 50 ms ago (20 Hz cap).
+        Injects `waiting_for_bt` so the QML banner can show the waiting state.
         """
         now = time.monotonic()
         if now - self._last_broadcast_ts < _UI_MIN_PERIOD:
@@ -150,6 +186,10 @@ class UiWebSocketServer:
 
         if not self._clients:
             return
+
+        # Inject waiting_for_bt without mutating the caller's dict
+        frame = dict(frame)
+        frame["waiting_for_bt"] = self._get_waiting_for_bt()
 
         payload = json.dumps(frame, separators=(",", ":"))
         dead = []
@@ -206,6 +246,19 @@ class UiWebSocketServer:
                     if mode not in ("mock", "elm"):
                         log.warning("[ws] ignoring set_mode with bad mode=%r", mode)
                         continue
+                    # Track user override: explicit MOCK toggle kills auto-switch;
+                    # explicit REAL toggle re-enables it.
+                    if mode == "mock":
+                        self._user_forced_mock = True
+                        self._bt_stop_bridge()
+                        log.info("[ws] set_mode=mock — bridge killed, user_forced_mock set")
+                    else:
+                        self._user_forced_mock = False
+                        # Respawn bridge if a MAC is configured
+                        mac = self._bt_read_mac()
+                        if mac:
+                            self._bt_start_bridge()
+                            log.info("[ws] set_mode=elm — respawned bridge for MAC %s", mac)
                     log.info("[ws] ← set_mode=%s from %s", mode, peer)
                     try:
                         await self._on_ui_command({"cmd": "set_mode", "mode": mode})
@@ -548,8 +601,14 @@ class UiWebSocketServer:
             bridge_started = False
             if ok:
                 self._bt_write_config(mac)
+                # Pairing resets the user override so auto-switch is re-enabled
+                self._user_forced_mock = False
                 self._bt_start_bridge()
                 bridge_started = (_bt_bridge_proc is not None and _bt_bridge_proc.poll() is None)
+                try:
+                    await self._on_ui_command({"cmd": "internal_bt_pair_success"})
+                except Exception:
+                    log.exception("[ws] internal_bt_pair_success callback raised")
             await ws.send(json.dumps({
                 "type":           "bt_pair_result",
                 "ok":             ok,
@@ -576,12 +635,18 @@ class UiWebSocketServer:
         try:
             from services.veya_core.helpers import bluetooth as _bt
             self._bt_stop_bridge()
+            # Unpairing returns to natural state — no user override anymore
+            self._user_forced_mock = False
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, functools.partial(_bt.unpair, mac)),
                 timeout=15.0,
             )
             if result.get("ok", False):
                 self._bt_clear_config()
+            try:
+                await self._on_ui_command({"cmd": "internal_bt_unpair"})
+            except Exception:
+                log.exception("[ws] internal_bt_unpair callback raised")
             await ws.send(json.dumps({
                 "type":  "bt_unpair_result",
                 "ok":    result.get("ok", False),
@@ -649,6 +714,16 @@ class UiWebSocketServer:
         log.info("[ws] bt_pairing_mode enabled=%s ok=%s", enabled, ok)
 
     # ── BT config / bridge subprocess helpers ─────────────────────────────────
+
+    def _bt_read_mac(self) -> str:
+        """Return the configured ESP32 MAC from bt_config.json, or '' if absent."""
+        try:
+            if not _BT_CONFIG_PATH.exists():
+                return ""
+            cfg = json.loads(_BT_CONFIG_PATH.read_text())
+            return cfg.get("esp32_mac", "").strip().upper()
+        except Exception:
+            return ""
 
     def _bt_read_esp32_connected(self) -> bool:
         """Return True if the status file exists, contains 'connected', and was
@@ -722,6 +797,58 @@ class UiWebSocketServer:
                         pass
                 log.info("[ws] bt_bridge stopped")
             _bt_bridge_proc = None
+        # Bridge gone → no longer waiting
+        self._last_bridge_state = "disconnected"
+
+    async def _bt_bridge_state_watcher(self) -> None:
+        """Poll /tmp/veya_bt_bridge_status.txt every 1.5 s and fire automatic
+        REAL ↔ MOCK transitions when the bridge connects or disconnects."""
+        # Initialise from current file state so first iteration only fires on
+        # a real change rather than reacting to a leftover file from last run.
+        try:
+            self._last_bridge_state = _BT_STATUS_FILE.read_text().strip()
+        except FileNotFoundError:
+            self._last_bridge_state = "disconnected"
+
+        while True:
+            await asyncio.sleep(1.5)
+
+            try:
+                current = _BT_STATUS_FILE.read_text().strip()
+            except FileNotFoundError:
+                current = "disconnected"
+
+            # Detect dead bridge process and respawn it (with 30 s cooldown
+            # to prevent crash-loops). Fires immediately on first death because
+            # _bridge_last_respawn_ts starts at 0.0.
+            if _bt_bridge_proc is not None:
+                rc = _bt_bridge_proc.poll()
+                if rc is not None:
+                    now = time.monotonic()
+                    if (not self._user_forced_mock
+                            and self._bt_read_mac()
+                            and now - self._bridge_last_respawn_ts >= 30.0):
+                        log.warning("[ws] bridge process died (rc=%d) — respawning "
+                                    "after %.1fs", rc, now - self._bridge_last_respawn_ts)
+                        self._bt_start_bridge()
+                        self._bridge_last_respawn_ts = now
+
+            if current != self._last_bridge_state:
+                log.info("[ws] bridge state changed: %s → %s",
+                         self._last_bridge_state, current)
+
+                if current == "connected" and self._core is not None:
+                    if not self._user_forced_mock:
+                        await self._core.transition_to_real_if_allowed()
+                        log.info("[ws] auto-switched to REAL on bridge connect")
+                    else:
+                        log.info("[ws] bridge connected but user_forced_mock — staying in mock")
+
+                elif current == "disconnected" and self._core is not None:
+                    await self._core.transition_to_mock_with_bridge_retry()
+                    log.info("[ws] auto-switched to MOCK+bridge-retry on bridge disconnect")
+
+                self._last_bridge_state = current
 
     # ── Server API handlers (Phase 3.1) ──────────────────────────────────────
 

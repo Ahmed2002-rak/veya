@@ -113,8 +113,14 @@ class VeyaCore:
         self.state:        str = STATE_MOCK if initial_mode == INTERNAL_MODE_MOCK \
                                             else STATE_REAL_WAITING
 
-        self._tcp = TcpSourceServer(listen_host, tcp_port, self._on_source_frame)
-        self._ws  = UiWebSocketServer("127.0.0.1", ws_port, self._on_ui_command)
+        # True when the user explicitly toggled to MOCK while a bridge was/could be
+        # connected. Prevents the bridge-state watcher from auto-switching back to
+        # REAL until the user manually toggles again.
+        self._user_forced_mock: bool = False
+
+        self._tcp = TcpSourceServer(listen_host, tcp_port, self._on_source_frame,
+                                    on_disconnect=self._on_source_disconnect)
+        self._ws  = UiWebSocketServer("127.0.0.1", ws_port, self._on_ui_command, core=self)
 
         self._mock_proc: Optional[asyncio.subprocess.Process] = None
         self._real_wait_task: Optional[asyncio.Task[None]] = None
@@ -197,6 +203,40 @@ class VeyaCore:
                 pass
         self._mock_proc = None
 
+    # ── Auto-transition helpers (called by ws_server bridge watcher) ─────────
+
+    async def transition_to_real_if_allowed(self) -> None:
+        """Called when the BT bridge reports 'connected'. Switches to REAL mode
+        unless the user has explicitly forced mock via the Home toggle."""
+        if self._user_forced_mock:
+            log.info("[core] bridge connected but user forced mock — not auto-switching")
+            return
+        if self.current_mode == INTERNAL_MODE_REAL:
+            log.debug("[core] transition_to_real_if_allowed: already in real mode")
+            return
+        log.info("[core] bridge connected — auto-switching to REAL mode")
+        self.current_mode = INTERNAL_MODE_REAL
+        await self._kill_mock_source()
+        self.state = STATE_REAL_CONNECTED if self._tcp.connected else STATE_REAL_WAITING
+        await self._broadcast_status_only()
+        if not self._tcp.connected:
+            self._schedule_real_wait_timeout()
+
+    async def transition_to_mock_with_bridge_retry(self) -> None:
+        """Called when the BT bridge reports 'disconnected'. Switches back to mock
+        mode so the UI keeps showing synthetic data while the bridge retries."""
+        if self.current_mode == INTERNAL_MODE_MOCK and self.state == STATE_MOCK:
+            log.debug("[core] transition_to_mock_with_bridge_retry: already in mock mode")
+            return
+        log.info("[core] bridge disconnected — switching to mock (bridge will retry)")
+        if self._real_wait_task is not None:
+            self._real_wait_task.cancel()
+            self._real_wait_task = None
+        self.current_mode = INTERNAL_MODE_MOCK
+        self.state = STATE_MOCK
+        await self._spawn_mock_source()
+        await self._broadcast_status_only()
+
     # ── Source frame handling (TCP → translate → UI) ─────────────────────────
 
     async def _on_source_frame(self, frame: Dict[str, Any]) -> None:
@@ -248,6 +288,26 @@ class VeyaCore:
             return
 
         log.debug("[core] unhandled source frame type: %s", ftype)
+
+    async def _on_source_disconnect(self, source_kind: Optional[str]) -> None:
+        """Called when the TCP source disconnects. Auto-spawns mock so the
+        dashboard never goes silent after the bridge drops.
+
+        source_kind=="veya-mock" + REAL mode → intentional kill during C→B; skip.
+        source_kind=="veya-mock" + MOCK mode → mock crashed; respawn.
+        anything else (None, esp32, …)   → bridge dropped; respawn mock for state B.
+        """
+        if self._user_forced_mock:
+            log.debug("[core] source disconnected but user_forced_mock — no auto-respawn")
+            return
+        if source_kind == "veya-mock" and self.current_mode == INTERNAL_MODE_REAL:
+            log.debug("[core] mock source disconnected during REAL transition — no auto-respawn")
+            return
+        if self._mock_proc is not None and self._mock_proc.returncode is None:
+            log.debug("[core] source disconnected but mock already running")
+            return
+        log.info("[core] source disconnected (kind=%s) — auto-respawning mock_source", source_kind)
+        await self._spawn_mock_source()
 
     def _translate_telemetry(self, frame: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -311,6 +371,16 @@ class VeyaCore:
                 log.warning("[core] esp32_query_mileage: no source connected")
             return
 
+        # Internal events from ws_server (bt_pair / bt_unpair reset override flag)
+        if verb == "internal_bt_pair_success":
+            self._user_forced_mock = False
+            log.info("[core] bt_pair_success — user_forced_mock cleared")
+            return
+        if verb == "internal_bt_unpair":
+            self._user_forced_mock = False
+            log.info("[core] bt_unpair — user_forced_mock cleared")
+            return
+
         if verb != "set_mode":
             log.warning("[core] unknown UI command: %s", cmd)
             return
@@ -318,6 +388,16 @@ class VeyaCore:
         ui_mode = cmd.get("mode")
         # UI uses legacy "mock"|"elm"; map elm → real internally.
         target = INTERNAL_MODE_REAL if ui_mode == "elm" else INTERNAL_MODE_MOCK
+
+        # Track explicit user intent BEFORE the mode equality check so that
+        # toggling back to the same mode still updates the override flag.
+        if target == INTERNAL_MODE_MOCK:
+            self._user_forced_mock = True
+            log.info("[core] set_mode=mock — user_forced_mock set")
+        else:
+            self._user_forced_mock = False
+            log.info("[core] set_mode=real — user_forced_mock cleared")
+
         if target == self.current_mode:
             log.info("[core] already in %s mode", target)
             return
