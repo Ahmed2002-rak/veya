@@ -251,7 +251,8 @@ Item {
                 return
             }
             if (obj.type === "report_result") {
-                root.reportResult = { ok: !!obj.ok, report: obj.report || null, error: obj.error || "" }
+                root.reportResult = { ok: !!obj.ok, report: obj.report || null,
+                                      error: obj.error || "", message: obj.message || "" }
                 return
             }
 

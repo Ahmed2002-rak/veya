@@ -60,6 +60,7 @@ Page {
         function onReportResultChanged() {
             const r = VehicleDataProvider.reportResult
             if (!r || !root.reportLoading) return
+            reportTimeoutTimer.stop()
             root.reportLoading = false
             if (r.ok) {
                 root.reportError = ""
@@ -67,18 +68,53 @@ Page {
                     root.nav.push(Qt.resolvedUrl("ReportScreen.qml"),
                                   { nav: root.nav, reportData: r.report })
             } else {
-                root.reportError = r.error || "Report generation failed"
+                root.reportError = r.message || r.error || "Une erreur s'est produite"
+            }
+        }
+    }
+
+    Timer {
+        id: reportTimeoutTimer
+        interval: 35000
+        repeat: false
+        running: false
+        onTriggered: {
+            if (root.reportLoading) {
+                root.reportLoading = false
+                root.reportError   = "La requête a expiré — réessayez"
             }
         }
     }
 
     function _sendReportRequest() {
-        const profile = {}  // UserProfile not always available — keep it simple
+        const now    = new Date()
+        const tsIso  = now.toISOString().replace(/\.\d+Z$/, "Z")
+        const make   = (UserProfile.carMake   || "").trim() || "Renault"
+        const model  = (UserProfile.carModel  || "").trim() || "Symbol"
+        const year   = parseInt(UserProfile.carYear) || 2010
+        const name   = (UserProfile.driverName || "").trim() || "Demo"
+        const vin    = (UserProfile.carVIN || "").trim() || null
+        const mileage = VehicleDataProvider.mileageKm >= 0 ? VehicleDataProvider.mileageKm : null
+
         const payload = {
-            dtcs:    root.cachedDtcs,
-            vehicle: { make: "Unknown", model: "Unknown" },
-            driver:  {}
+            schema:       1,
+            request_type: "diagnostic_report",
+            ts_iso:       tsIso,
+            vehicle: {
+                make:       make,
+                model:      model,
+                year:       year,
+                vin:        vin,
+                mileage_km: mileage
+            },
+            driver: {
+                name:     name,
+                language: "fr"
+            },
+            dtcs: root.cachedDtcs || []
         }
+        console.log("[Diagnostic] _sendReportRequest payload:", JSON.stringify(payload))
+        reportTimeoutTimer.restart()
         VehicleDataProvider.sendCommand({ cmd: "server_request_report", payload: payload })
     }
 
@@ -533,6 +569,36 @@ Page {
                 font.pixelSize: 14; font.family: "DejaVu Sans"
                 wrapMode: Text.WordWrap
                 horizontalAlignment: Text.AlignHCenter
+            }
+        }
+
+        // ── Sample demo link ──────────────────────────────────────────────
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 28
+            Layout.bottomMargin: 2
+
+            Text {
+                id: sampleLink
+                anchors.centerIn: parent
+                text: "Voir un exemple →"
+                color: Qt.rgba(0.302, 0.824, 1.0, sampleMouse.containsMouse ? 0.85 : 0.45)
+                font.pixelSize: 12; font.family: "DejaVu Sans"
+                Behavior on color { ColorAnimation { duration: 150 } }
+
+                MouseArea {
+                    id: sampleMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (root.reportLoading) return
+                        root.reportError   = ""
+                        root.reportLoading = true
+                        reportTimeoutTimer.restart()
+                        VehicleDataProvider.sendCommand({ cmd: "load_sample_report" })
+                    }
+                }
             }
         }
     }

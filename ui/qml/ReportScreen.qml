@@ -101,7 +101,6 @@ Page {
 
             Item { Layout.fillWidth: true }
 
-            // Connection badge
             Rectangle {
                 Layout.alignment: Qt.AlignVCenter
                 Layout.preferredHeight: 28
@@ -117,7 +116,6 @@ Page {
                     id: rBadgeRow
                     anchors.centerIn: parent
                     spacing: 7
-
                     Rectangle {
                         width: 7; height: 7; radius: 4
                         anchors.verticalCenter: parent.verticalCenter
@@ -133,17 +131,16 @@ Page {
             }
         }
 
-        // ── Content ───────────────────────────────────────────────────────
+        // ── Content area ──────────────────────────────────────────────────
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            // ── No data placeholder ───────────────────────────────────────
+            // No-data placeholder
             ColumnLayout {
                 anchors.centerIn: parent
                 visible: reportData === null
                 spacing: 16
-
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     text: "No report data"
@@ -159,23 +156,31 @@ Page {
                 }
             }
 
-            // ── Scrollable report ─────────────────────────────────────────
-            ScrollView {
+            // Scrollable report
+            Flickable {
+                id: mainFlickable
                 anchors.fill: parent
                 visible: reportData !== null
+                contentWidth: width
+                contentHeight: contentColumn.implicitHeight + 16
                 clip: true
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                ColumnLayout {
-                    width: parent.width
+                Component.onCompleted: contentY = 0
+
+                Column {
+                    id: contentColumn
+                    width: mainFlickable.width
                     spacing: 14
+                    topPadding: 8
+                    bottomPadding: 8
 
                     // ── HEADER CARD ──────────────────────────────────────
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.topMargin: 8
-                        height: headerCol.implicitHeight + 28
+                        width: parent.width
+                        implicitHeight: headerInner.implicitHeight + 24
                         radius: 14
+                        visible: reportData !== null
                         color: Qt.rgba(1, 1, 1, 0.04)
                         border.color: {
                             const sev = reportData ? (reportData.severity || "") : ""
@@ -183,39 +188,42 @@ Page {
                         }
                         border.width: 1
 
-                        ColumnLayout {
-                            id: headerCol
-                            anchors { left: parent.left; right: parent.right; margins: 18 }
-                            anchors.verticalCenter: parent.verticalCenter
+                        Column {
+                            id: headerInner
+                            anchors { left: parent.left; right: parent.right; top: parent.top }
+                            anchors.margins: 18
+                            anchors.topMargin: 12
                             spacing: 8
 
-                            // report_id + timestamp row
-                            RowLayout {
-                                Layout.fillWidth: true
+                            Row {
+                                width: parent.width
                                 Text {
+                                    id: hdrIdText
                                     text: reportData ? (reportData.report_id || "—") : "—"
                                     color: root.cDim
                                     font.pixelSize: 11; font.family: "DejaVu Sans Mono"
                                 }
-                                Item { Layout.fillWidth: true }
+                                Item {
+                                    width: parent.width - hdrIdText.implicitWidth - hdrTsText.implicitWidth
+                                    height: 1
+                                }
                                 Text {
-                                    text: reportData ? (reportData.timestamp || "") : ""
+                                    id: hdrTsText
+                                    text: reportData ? (reportData.ts_iso || reportData.timestamp || "") : ""
                                     color: root.cDim
                                     font.pixelSize: 11; font.family: "DejaVu Sans"
                                 }
                             }
 
-                            // Severity badge
                             Rectangle {
                                 height: 26; width: sevText.implicitWidth + 24
                                 radius: 13
-                                color: Qt.rgba(0,0,0,0.30)
+                                color: Qt.rgba(0, 0, 0, 0.30)
                                 border.color: {
                                     const sev = reportData ? (reportData.severity || "") : ""
                                     return root.severityColor(sev)
                                 }
                                 border.width: 1
-
                                 Text {
                                     id: sevText
                                     anchors.centerIn: parent
@@ -229,9 +237,8 @@ Page {
                                 }
                             }
 
-                            // Summary
                             Text {
-                                Layout.fillWidth: true
+                                width: parent.width
                                 text: reportData ? (reportData.summary || "") : ""
                                 color: root.cText
                                 font.pixelSize: 15; font.family: "DejaVu Sans"
@@ -240,56 +247,122 @@ Page {
                         }
                     }
 
-                    // ── DTC ANALYSIS CARDS ──────────────────────────────
+                    // ── NO FAULTS CARD ───────────────────────────────────
+                    Rectangle {
+                        width: parent.width
+                        implicitHeight: noFaultsInner.implicitHeight + 24
+                        radius: 14
+                        color: Qt.rgba(0.28, 1, 0.60, 0.05)
+                        border.color: Qt.rgba(0.28, 1, 0.60, 0.30)
+                        border.width: 1
+                        visible: reportData !== null && (reportData.dtc_analyses || []).length === 0
+
+                        Column {
+                            id: noFaultsInner
+                            anchors { left: parent.left; right: parent.right; top: parent.top }
+                            anchors.margins: 18
+                            anchors.topMargin: 12
+                            spacing: 6
+                            Text {
+                                width: parent.width
+                                text: "✓"
+                                color: root.cGreen
+                                font.pixelSize: 32; font.family: "DejaVu Sans"
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                width: parent.width
+                                text: "Aucun défaut détecté"
+                                color: root.cGreen
+                                font.pixelSize: 16; font.bold: true
+                                font.family: "DejaVu Sans"
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                width: parent.width
+                                text: "Le véhicule ne présente aucun code défaut actif."
+                                color: root.cDim
+                                font.pixelSize: 13; font.family: "DejaVu Sans"
+                                wrapMode: Text.WordWrap
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+                    }
+
+                    // ── DTC ANALYSIS CARDS ───────────────────────────────
                     Repeater {
                         model: reportData ? (reportData.dtc_analyses || []) : []
 
                         delegate: Rectangle {
-                            Layout.fillWidth: true
-                            height: dtcCol.implicitHeight + 28
-                            radius: 14
-                            color: Qt.rgba(1, 0.30, 0.43, 0.05)
-                            border.color: Qt.rgba(1, 0.30, 0.43, 0.30)
-                            border.width: 1
-
                             required property var modelData
 
-                            ColumnLayout {
-                                id: dtcCol
-                                anchors { left: parent.left; right: parent.right; margins: 18 }
-                                anchors.top: parent.top; anchors.topMargin: 14
+                            width: contentColumn.width
+                            implicitHeight: dtcInner.implicitHeight + 24
+                            radius: 14
+                            color: {
+                                const sev = modelData.severity || ""
+                                if (sev === "critical") return Qt.rgba(1, 0.30, 0.43, 0.05)
+                                if (sev === "warning")  return Qt.rgba(1, 0.85, 0.30, 0.05)
+                                return Qt.rgba(0.30, 0.82, 1, 0.05)
+                            }
+                            border.color: root.severityColor(modelData.severity || "")
+                            border.width: 1
+
+                            Column {
+                                id: dtcInner
+                                anchors { left: parent.left; right: parent.right; top: parent.top }
+                                anchors.margins: 18
+                                anchors.topMargin: 12
                                 spacing: 8
 
-                                // Code badge + title row
-                                RowLayout {
-                                    spacing: 12
+                                Row {
+                                    width: parent.width
+                                    spacing: 8
                                     Rectangle {
                                         height: 28; width: codeText.implicitWidth + 16
                                         radius: 6
-                                        color: Qt.rgba(1, 0.30, 0.43, 0.15)
-                                        border.color: root.cWarn; border.width: 1
+                                        color: Qt.rgba(0, 0, 0, 0.30)
+                                        border.color: root.severityColor(modelData.severity || "")
+                                        border.width: 1
                                         Text {
                                             id: codeText
                                             anchors.centerIn: parent
                                             text: modelData.code || "???"
-                                            color: root.cWarn
+                                            color: root.severityColor(modelData.severity || "")
                                             font.pixelSize: 14; font.bold: true
                                             font.family: "DejaVu Sans Mono"
                                         }
                                     }
-                                    Text {
-                                        text: modelData.title || ""
-                                        color: root.cText
-                                        font.pixelSize: 15; font.bold: true
-                                        font.family: "DejaVu Sans"
-                                        wrapMode: Text.WordWrap
-                                        Layout.fillWidth: true
+                                    Rectangle {
+                                        height: 28; width: statusBadgeText.implicitWidth + 16
+                                        radius: 6
+                                        color: Qt.rgba(1, 1, 1, 0.05)
+                                        border.color: Qt.rgba(1, 1, 1, 0.20)
+                                        border.width: 1
+                                        visible: (modelData.status || "").length > 0
+                                        Text {
+                                            id: statusBadgeText
+                                            anchors.centerIn: parent
+                                            text: (modelData.status || "").toUpperCase()
+                                            color: root.cDim
+                                            font.pixelSize: 11; font.bold: true
+                                            font.letterSpacing: 1; font.family: "DejaVu Sans"
+                                        }
                                     }
                                 }
 
-                                // Description
                                 Text {
-                                    Layout.fillWidth: true
+                                    width: parent.width
+                                    text: modelData.title || ""
+                                    color: root.cText
+                                    font.pixelSize: 15; font.bold: true
+                                    font.family: "DejaVu Sans"
+                                    wrapMode: Text.WordWrap
+                                    visible: text.length > 0
+                                }
+
+                                Text {
+                                    width: parent.width
                                     text: modelData.description || ""
                                     color: root.cDim
                                     font.pixelSize: 13; font.family: "DejaVu Sans"
@@ -297,37 +370,37 @@ Page {
                                     visible: text.length > 0
                                 }
 
-                                // Causes
                                 Column {
-                                    Layout.fillWidth: true
+                                    width: parent.width
                                     spacing: 3
-                                    visible: (modelData.causes || []).length > 0
+                                    visible: (modelData.probable_causes || modelData.causes || []).length > 0
                                     Text {
-                                        text: "● CAUSES"
+                                        width: parent.width
+                                        text: "● CAUSES PROBABLES"
                                         color: root.cAmber
                                         font.pixelSize: 11; font.bold: true
                                         font.letterSpacing: 1.2; font.family: "DejaVu Sans"
                                     }
                                     Repeater {
-                                        model: modelData.causes || []
+                                        model: modelData.probable_causes || modelData.causes || []
                                         Text {
                                             required property string modelData
+                                            width: parent.width
                                             text: "  · " + modelData
                                             color: root.cDim
                                             font.pixelSize: 13; font.family: "DejaVu Sans"
                                             wrapMode: Text.WordWrap
-                                            width: parent.width
                                         }
                                     }
                                 }
 
-                                // Symptoms
                                 Column {
-                                    Layout.fillWidth: true
+                                    width: parent.width
                                     spacing: 3
                                     visible: (modelData.symptoms || []).length > 0
                                     Text {
-                                        text: "● SYMPTOMS"
+                                        width: parent.width
+                                        text: "● SYMPTÔMES"
                                         color: root.cAmber
                                         font.pixelSize: 11; font.bold: true
                                         font.letterSpacing: 1.2; font.family: "DejaVu Sans"
@@ -336,22 +409,22 @@ Page {
                                         model: modelData.symptoms || []
                                         Text {
                                             required property string modelData
+                                            width: parent.width
                                             text: "  · " + modelData
                                             color: root.cDim
                                             font.pixelSize: 13; font.family: "DejaVu Sans"
                                             wrapMode: Text.WordWrap
-                                            width: parent.width
                                         }
                                     }
                                 }
 
-                                // Recommended actions
                                 Column {
-                                    Layout.fillWidth: true
+                                    width: parent.width
                                     spacing: 3
                                     visible: (modelData.recommended_actions || []).length > 0
                                     Text {
-                                        text: "● RECOMMENDED ACTIONS"
+                                        width: parent.width
+                                        text: "● ACTIONS RECOMMANDÉES"
                                         color: root.cCyan
                                         font.pixelSize: 11; font.bold: true
                                         font.letterSpacing: 1.2; font.family: "DejaVu Sans"
@@ -360,57 +433,61 @@ Page {
                                         model: modelData.recommended_actions || []
                                         Text {
                                             required property string modelData
+                                            width: parent.width
                                             text: "  · " + modelData
                                             color: root.cDim
                                             font.pixelSize: 13; font.family: "DejaVu Sans"
                                             wrapMode: Text.WordWrap
-                                            width: parent.width
                                         }
                                     }
                                 }
-
-                                Item { height: 4 }
                             }
                         }
                     }
 
-                    // ── FOOTER CARD ──────────────────────────────────────
+                    // ── FOOTER RECOMMENDATIONS CARD ──────────────────────
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.bottomMargin: 8
-                        height: footerCol.implicitHeight + 28
+                        width: parent.width
+                        implicitHeight: footerInner.implicitHeight + 24
                         radius: 14
                         color: Qt.rgba(1, 1, 1, 0.04)
                         border.color: Qt.rgba(0.30, 0.82, 1, 0.30)
                         border.width: 1
-                        visible: (reportData && (reportData.overall_recommendations || []).length > 0)
+                        visible: {
+                            const recs = reportData
+                                ? (reportData.recommendations || reportData.overall_recommendations || [])
+                                : []
+                            return recs.length > 0
+                        }
 
                         Column {
-                            id: footerCol
-                            anchors { left: parent.left; right: parent.right; margins: 18 }
-                            anchors.top: parent.top; anchors.topMargin: 14
+                            id: footerInner
+                            anchors { left: parent.left; right: parent.right; top: parent.top }
+                            anchors.margins: 18
+                            anchors.topMargin: 12
                             spacing: 4
 
                             Text {
-                                text: "● OVERALL RECOMMENDATIONS"
+                                width: parent.width
+                                text: "● RECOMMANDATIONS GÉNÉRALES"
                                 color: root.cGreen
                                 font.pixelSize: 11; font.bold: true
                                 font.letterSpacing: 1.2; font.family: "DejaVu Sans"
                             }
 
                             Repeater {
-                                model: reportData ? (reportData.overall_recommendations || []) : []
+                                model: reportData
+                                       ? (reportData.recommendations || reportData.overall_recommendations || [])
+                                       : []
                                 Text {
                                     required property string modelData
+                                    width: parent.width
                                     text: "  · " + modelData
                                     color: root.cDim
                                     font.pixelSize: 13; font.family: "DejaVu Sans"
                                     wrapMode: Text.WordWrap
-                                    width: parent.width
                                 }
                             }
-
-                            Item { height: 4 }
                         }
                     }
                 }

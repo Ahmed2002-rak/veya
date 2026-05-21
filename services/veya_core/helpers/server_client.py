@@ -10,15 +10,18 @@ Public API
 server_check()           GET  <base>/ver            → {'ok', 'error'}
 lookup_dtc(code, kind)   GET  <base>/<kind>?dtc=<code>
                                                     → {'ok', 'text', 'error'}
-request_report(payload)  POST <base>/report         → {'ok', 'report', 'error'}
+request_report(payload)  POST <base>/report         → {'ok', 'report', 'error', 'message'}
 """
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
 import urllib.error
 import urllib.request
 from typing import Any, Dict
+
+log = logging.getLogger(__name__)
 
 _CONFIG_PATH = pathlib.Path.home() / ".veya" / "server_config.json"
 
@@ -82,11 +85,11 @@ def lookup_dtc(code: str, kind: str) -> Dict[str, Any]:
 
 def request_report(payload: Dict[str, Any]) -> Dict[str, Any]:
     """POST <base_url>/report with JSON payload
-    Returns {'ok': bool, 'report': dict|None, 'error': str|None}
+    Returns {'ok': bool, 'report': dict|None, 'error': str|None, 'message': str}
     """
     base = _read_base_url()
     if not base:
-        return {"ok": False, "report": None, "error": "server_not_configured"}
+        return {"ok": False, "report": None, "error": "server_not_configured", "message": ""}
     url = base.rstrip("/") + "/report"
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -95,21 +98,30 @@ def request_report(payload: Dict[str, Any]) -> Dict[str, Any]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    log.info("[server_client] POST /report payload: %s", json.dumps(payload, ensure_ascii=False))
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
                 report = json.loads(raw)
             except json.JSONDecodeError:
-                return {"ok": False, "report": None, "error": "invalid_response"}
-            return {"ok": True, "report": report, "error": None}
+                return {"ok": False, "report": None, "error": "invalid_response", "message": ""}
+            return {"ok": True, "report": report, "error": None, "message": ""}
     except urllib.error.HTTPError as exc:
-        error = _extract_error(exc)
-        return {"ok": False, "report": None, "error": error}
+        try:
+            body_text = exc.read().decode("utf-8", errors="replace")
+            log.warning("[server_client] POST /report failed: HTTP %d, body=%s", exc.code, body_text)
+            data = json.loads(body_text)
+            error_code = str(data.get("error") or data.get("detail") or exc.reason or f"HTTP {exc.code}")
+            message    = str(data.get("message") or data.get("detail") or error_code)
+        except Exception:
+            error_code = exc.reason or f"HTTP {exc.code}"
+            message    = error_code
+        return {"ok": False, "report": None, "error": error_code, "message": message}
     except urllib.error.URLError:
-        return {"ok": False, "report": None, "error": "network_unreachable"}
+        return {"ok": False, "report": None, "error": "network_unreachable", "message": ""}
     except TimeoutError:
-        return {"ok": False, "report": None, "error": "timeout"}
+        return {"ok": False, "report": None, "error": "timeout", "message": ""}
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
