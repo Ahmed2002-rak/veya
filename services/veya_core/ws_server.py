@@ -725,6 +725,17 @@ class UiWebSocketServer:
         except Exception:
             return ""
 
+    def _bt_read_transport(self) -> str:
+        """Return the configured bridge transport: 'ble' or 'spp' (default)."""
+        try:
+            if not _BT_CONFIG_PATH.exists():
+                return "spp"
+            cfg = json.loads(_BT_CONFIG_PATH.read_text())
+            t = cfg.get("transport", "spp").strip().lower()
+            return t if t in ("ble", "spp") else "spp"
+        except Exception:
+            return "spp"
+
     def _bt_read_esp32_connected(self) -> bool:
         """Return True if the status file exists, contains 'connected', and was
         touched within the last 5 seconds (bridge is actively forwarding data)."""
@@ -767,19 +778,27 @@ class UiWebSocketServer:
     def _bt_start_bridge(self) -> None:
         global _bt_bridge_proc
         self._bt_stop_bridge()
-        log_path = pathlib.Path.home() / "veya" / "logs" / "bt_bridge.log"
+        transport = self._bt_read_transport()
+        if transport == "ble":
+            module   = "services.veya_core.ble_bridge"
+            log_name = "ble_bridge"
+        else:
+            module   = "services.veya_core.bt_bridge"
+            log_name = "bt_bridge"
+        log_path = pathlib.Path.home() / "veya" / "logs" / f"{log_name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_fh = open(log_path, "a")
         try:
             _bt_bridge_proc = subprocess.Popen(
-                [sys.executable, "-m", "services.veya_core.bt_bridge"],
+                [sys.executable, "-m", module],
                 stdout=log_fh,
                 stderr=log_fh,
                 start_new_session=True,
             )
-            log.info("[ws] bt_bridge started pid=%d", _bt_bridge_proc.pid)
+            log.info("[ws] %s started pid=%d (transport=%s)",
+                     log_name, _bt_bridge_proc.pid, transport)
         except Exception as exc:
-            log.error("[ws] bt_bridge start failed: %s", exc)
+            log.error("[ws] bridge start failed (transport=%s): %s", transport, exc)
             _bt_bridge_proc = None
 
     def _bt_stop_bridge(self) -> None:
