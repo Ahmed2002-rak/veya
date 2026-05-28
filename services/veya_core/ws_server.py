@@ -536,9 +536,46 @@ class UiWebSocketServer:
     # block the asyncio event loop. Same pattern as wifi_* handlers above.
 
     async def _handle_bt_scan(self, ws: Any) -> None:
+        from services.veya_core.helpers import bluetooth as _bt
+        transport = self._bt_read_transport()
+        if transport == "ble":
+            # BLE scan via bleak (async — awaited directly, no run_in_executor).
+            # Safety: running BleakScanner.discover() while a BleakClient GATT
+            # connection is live can disrupt BlueZ notification delivery.  Refuse
+            # to scan when the bridge reports itself as connected.
+            bridge_live = (
+                _bt_bridge_proc is not None
+                and _bt_bridge_proc.poll() is None
+                and self._last_bridge_state == "connected"
+            )
+            if bridge_live:
+                await self._ws_send_safe(ws, {
+                    "type":    "bt_scan_result",
+                    "devices": [],
+                    "error":   "BLE scan unavailable while bridge is connected",
+                })
+                log.info("[ws] bt_scan (ble) skipped — bridge connected")
+                return
+            try:
+                result = await asyncio.wait_for(_bt.scan_ble(), timeout=15.0)
+                await ws.send(json.dumps({
+                    "type":    "bt_scan_result",
+                    "devices": result.get("devices", []),
+                    "error":   result.get("error", ""),
+                }))
+                log.info("[ws] bt_scan (ble) → %d devices", len(result.get("devices", [])))
+            except asyncio.TimeoutError:
+                log.warning("[ws] bt_scan (ble) timed out")
+                await self._ws_send_safe(ws, {"type": "bt_scan_result", "devices": [],
+                                              "error": "BLE scan timed out"})
+            except Exception as exc:
+                log.error("[ws] bt_scan (ble) failed: %s", exc)
+                await self._ws_send_safe(ws, {"type": "bt_scan_result", "devices": [],
+                                              "error": str(exc)})
+            return
+        # ── Classic SPP scan (hcitool BR/EDR inquiry) ──────────────────────────
         loop = asyncio.get_running_loop()
         try:
-            from services.veya_core.helpers import bluetooth as _bt
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, _bt.scan),
                 timeout=20.0,
@@ -566,6 +603,22 @@ class UiWebSocketServer:
                 loop.run_in_executor(None, _bt.status),
                 timeout=10.0,
             )
+            # When transport is BLE, bluetoothctl knows nothing about the GATT device
+            # (no classic bond).  Inject the configured MAC so the UI shows the
+            # Unpair button and connection state correctly.
+            if self._bt_read_transport() == "ble":
+                ble_mac = self._bt_read_mac()
+                if ble_mac:
+                    paired = list(result.get("paired", []))
+                    known = {d.get("mac", "").upper() for d in paired}
+                    if ble_mac not in known:
+                        paired.insert(0, {
+                            "mac":      ble_mac,
+                            "name":     "VEYA-BLE-OBD",
+                            "in_range": self._bt_read_esp32_connected(),
+                        })
+                    result = dict(result)
+                    result["paired"] = paired
             await ws.send(json.dumps({
                 "type":            "bt_status",
                 "paired":          result.get("paired", []),
@@ -589,6 +642,32 @@ class UiWebSocketServer:
             await self._ws_send_safe(ws, {"type": "bt_pair_result", "ok": False,
                                           "error": "no MAC provided"})
             return
+        transport = self._bt_read_transport()
+        if transport == "ble":
+            # BLE (NUS) requires no classic pairing handshake — just store the MAC
+            # and spawn ble_bridge; it will connect via GATT on its own.
+            try:
+                self._bt_write_config(mac)
+                self._user_forced_mock = False
+                self._bt_start_bridge()
+                bridge_started = (_bt_bridge_proc is not None and _bt_bridge_proc.poll() is None)
+                try:
+                    await self._on_ui_command({"cmd": "internal_bt_pair_success"})
+                except Exception:
+                    log.exception("[ws] internal_bt_pair_success callback raised")
+                await ws.send(json.dumps({
+                    "type":           "bt_pair_result",
+                    "ok":             True,
+                    "bridge_started": bridge_started,
+                    "error":          "",
+                }))
+                log.info("[ws] bt_pair (ble) mac=%r bridge_started=%s", mac, bridge_started)
+            except Exception as exc:
+                log.error("[ws] bt_pair (ble) failed mac=%r: %s", mac, exc)
+                await self._ws_send_safe(ws, {"type": "bt_pair_result", "ok": False,
+                                              "error": str(exc)})
+            return
+        # ── Classic SPP pairing (bluetoothctl BR/EDR) ──────────────────────────
         loop = asyncio.get_running_loop()
         import functools
         try:
@@ -632,15 +711,22 @@ class UiWebSocketServer:
             return
         loop = asyncio.get_running_loop()
         import functools
+        transport = self._bt_read_transport()
         try:
             from services.veya_core.helpers import bluetooth as _bt
             self._bt_stop_bridge()
             # Unpairing returns to natural state — no user override anymore
             self._user_forced_mock = False
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, functools.partial(_bt.unpair, mac)),
-                timeout=15.0,
-            )
+            if transport == "ble":
+                # BLE uses connect-only NUS (no bond); bluetoothctl remove is
+                # irrelevant.  Always clear the config MAC unconditionally so
+                # boot does not auto-respawn the bridge to an unpaired device.
+                result = {"ok": True, "error": ""}
+            else:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, functools.partial(_bt.unpair, mac)),
+                    timeout=15.0,
+                )
             if result.get("ok", False):
                 self._bt_clear_config()
             try:
@@ -652,7 +738,8 @@ class UiWebSocketServer:
                 "ok":    result.get("ok", False),
                 "error": result.get("error", ""),
             }))
-            log.info("[ws] bt_unpair mac=%r ok=%s", mac, result.get("ok"))
+            log.info("[ws] bt_unpair (transport=%s) mac=%r ok=%s",
+                     transport, mac, result.get("ok"))
         except asyncio.TimeoutError:
             log.warning("[ws] bt_unpair timed out mac=%r", mac)
             await self._ws_send_safe(ws, {"type": "bt_unpair_result", "ok": False,
