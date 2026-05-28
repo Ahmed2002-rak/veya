@@ -113,6 +113,40 @@ def scan(duration: int = 8) -> dict:
     return {"devices": devices, "error": ""}
 
 
+async def scan_ble(timeout: float = 8.0) -> dict:
+    """Scan for nearby BLE devices using bleak.
+
+    Returns {"devices": [...], "error": ""}
+    Each device: {"mac": "AA:BB:...", "name": "...", "paired": False, "connected": False}
+    Devices whose name starts with "VEYA-BLE-OBD" are listed first.
+    Only called when transport=="ble"; caller must not invoke while a BleakClient
+    connection is live (concurrent BlueZ scan + active GATT link can disrupt notifications).
+    """
+    try:
+        from bleak import BleakScanner
+    except ImportError:
+        return {"devices": [], "error": "bleak not installed"}
+
+    try:
+        found = await BleakScanner.discover(timeout=timeout)
+    except Exception as exc:
+        return {"devices": [], "error": str(exc)}
+
+    veya: list[dict] = []
+    others: list[dict] = []
+    for d in found:
+        name = d.name or ""
+        if not name:
+            continue
+        entry = {"mac": d.address.upper(), "name": name, "paired": False, "connected": False}
+        if name.startswith("VEYA-BLE-OBD"):
+            veya.append(entry)
+        else:
+            others.append(entry)
+
+    return {"devices": veya + others, "error": ""}
+
+
 def status() -> dict:
     """Return currently paired/connected BT devices and adapter state.
 
