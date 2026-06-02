@@ -18,6 +18,9 @@ Page {
     readonly property color cCyan:   "#4DD2FF"
     readonly property color cText:   "white"
     readonly property color cWarn:   "#FF4D6D"
+    readonly property color cGreen:  "#47FF9A"
+
+    property string liveSessionState: "stopped"
 
     // ── Server config (Phase 3.0a) ───────────────────────────────────────
     property string liveUrl: ""
@@ -27,19 +30,29 @@ Page {
         return "Server unreachable — check network connection"
     }
 
+    function sendCmd(obj) {
+        if (liveConfigWs.status === WebSocket.Open)
+            liveConfigWs.sendTextMessage(JSON.stringify(obj))
+    }
+
     WebSocket {
         id: liveConfigWs
         url: "ws://127.0.0.1:8765"
         active: true
         onStatusChanged: {
-            if (status === WebSocket.Open)
+            if (status === WebSocket.Open) {
                 liveConfigWs.sendTextMessage(JSON.stringify({ cmd: "load_server_config" }))
+                liveConfigWs.sendTextMessage(JSON.stringify({ cmd: "live_session_status" }))
+            }
         }
         onTextMessageReceived: function(message) {
             let obj
             try { obj = JSON.parse(message) } catch(e) { return }
             if (obj.type === "server_config") {
                 root.liveUrl = (obj.data && obj.data.live_session_url) ? obj.data.live_session_url : ""
+            }
+            if (obj.type === "live_session_status" && obj.state !== undefined) {
+                root.liveSessionState = obj.state
             }
         }
     }
@@ -198,13 +211,26 @@ Page {
                 width: root.width * 0.65
                 spacing: 22
 
-                // Connection state badge — State 1: Not Connected
+                // Connection state badge — dynamic
                 Rectangle {
                     Layout.alignment: Qt.AlignHCenter
-                    width: 200; height: 80
+                    width: 240; height: 56
                     radius: 14
-                    color: "#1A2530"
-                    border.color: Qt.rgba(1, 1, 1, 0.12); border.width: 1
+                    color: {
+                        if (root.liveSessionState === "connected_active")  return Qt.rgba(0.28, 1, 0.60, 0.12)
+                        if (root.liveSessionState === "connected_idle")    return Qt.rgba(0.302, 0.824, 1, 0.10)
+                        if (root.liveSessionState === "connecting")        return Qt.rgba(1, 0.76, 0.03, 0.12)
+                        return Qt.rgba(1, 1, 1, 0.04)
+                    }
+                    border.color: {
+                        if (root.liveSessionState === "connected_active")  return root.cGreen
+                        if (root.liveSessionState === "connected_idle")    return root.cCyan
+                        if (root.liveSessionState === "connecting")        return root.cWarn
+                        return Qt.rgba(1, 1, 1, 0.15)
+                    }
+                    border.width: 1
+                    Behavior on color        { ColorAnimation { duration: 400 } }
+                    Behavior on border.color { ColorAnimation { duration: 400 } }
 
                     Row {
                         anchors.centerIn: parent
@@ -213,14 +239,33 @@ Page {
                         Rectangle {
                             width: 10; height: 10; radius: 5
                             anchors.verticalCenter: parent.verticalCenter
-                            color: "#6B7A8A"
+                            color: {
+                                if (root.liveSessionState === "connected_active")  return root.cGreen
+                                if (root.liveSessionState === "connected_idle")    return root.cCyan
+                                if (root.liveSessionState === "connecting")        return root.cWarn
+                                return "#6B7A8A"
+                            }
+                            Behavior on color { ColorAnimation { duration: 300 } }
+                            SequentialAnimation on opacity {
+                                running: root.liveSessionState === "connecting"
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.2; duration: 600 }
+                                NumberAnimation { to: 1.0; duration: 600 }
+                                onRunningChanged: { if (!running) parent.opacity = 1.0 }
+                            }
                         }
 
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "Not Connected"
-                            color: Qt.rgba(1, 1, 1, 0.55)
-                            font.pixelSize: 16; font.bold: true
+                            text: {
+                                if (root.liveSessionState === "connected_active") return "LIVE — expert connected"
+                                if (root.liveSessionState === "connected_idle")   return "Connected — waiting"
+                                if (root.liveSessionState === "connecting")       return "Connecting…"
+                                if (root.liveSessionState === "disconnected")     return "Disconnected"
+                                return "Offline"
+                            }
+                            color: root.cText
+                            font.pixelSize: 14; font.bold: true
                             font.family: "DejaVu Sans"
                         }
                     }
@@ -278,36 +323,70 @@ Page {
             }
         }
 
-        // ── Disabled Start Session button ─────────────────────────────────
+        // ── Start / Stop Session button ───────────────────────────────────
         Item {
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: 20
             width: root.width * 0.4
             height: 50
 
+            property bool isRunning: root.liveSessionState === "connecting"
+                                  || root.liveSessionState === "connected_idle"
+                                  || root.liveSessionState === "connected_active"
+
+            property bool canStart: root.liveUrl.length > 0
+
             Rectangle {
                 anchors.fill: parent
                 radius: 10
-                color: Qt.rgba(1, 1, 1, 0.04)
-                border.color: Qt.rgba(1, 1, 1, 0.10); border.width: 1
-                opacity: 0.5
+                opacity: (!parent.canStart && !parent.isRunning) ? 0.4 : 1.0
+                Behavior on opacity { NumberAnimation { duration: 200 } }
+
+                color: {
+                    if (!parent.canStart && !parent.isRunning) return Qt.rgba(1, 1, 1, 0.04)
+                    if (parent.isRunning) return Qt.rgba(1, 0.30, 0.43, 0.10)
+                    return Qt.rgba(0.28, 1, 0.60, 0.10)
+                }
+                border.color: {
+                    if (!parent.canStart && !parent.isRunning) return Qt.rgba(1, 1, 1, 0.10)
+                    if (parent.isRunning) return root.cWarn
+                    return root.cGreen
+                }
+                border.width: 1
+                Behavior on color        { ColorAnimation { duration: 200 } }
+                Behavior on border.color { ColorAnimation { duration: 200 } }
 
                 Text {
                     anchors.centerIn: parent
-                    text: "Start Session"
-                    color: Qt.rgba(1, 1, 1, 0.5)
+                    text: parent.parent.isRunning ? "Stop Session" : "Start Session"
+                    color: {
+                        if (!parent.parent.canStart && !parent.parent.isRunning) return Qt.rgba(1, 1, 1, 0.5)
+                        if (parent.parent.isRunning) return root.cWarn
+                        return root.cGreen
+                    }
                     font.pixelSize: 16; font.bold: true; font.family: "DejaVu Sans"
                 }
             }
 
-            ToolTip.visible: sessionDisabledHover.containsMouse
-            ToolTip.text: root.buttonTooltip
+            ToolTip {
+                visible: btnMouse.containsMouse && !parent.canStart && !parent.isRunning
+                text: root.buttonTooltip
+            }
 
             MouseArea {
-                id: sessionDisabledHover
+                id: btnMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                cursorShape: Qt.ForbiddenCursor
+                cursorShape: (!parent.canStart && !parent.isRunning)
+                             ? Qt.ForbiddenCursor : Qt.PointingHandCursor
+                onClicked: {
+                    if (!parent.canStart && !parent.isRunning) return
+                    if (parent.isRunning) {
+                        root.sendCmd({ cmd: "live_session_stop" })
+                    } else {
+                        root.sendCmd({ cmd: "live_session_start" })
+                    }
+                }
             }
         }
     }
