@@ -46,6 +46,9 @@ Incoming UI commands:
     {"cmd": "esp32_clear_dtc"}      ← Phase 3.0e: routes clear_dtc to ESP32 via TCP
     {"cmd": "esp32_query_mileage"}  ← Phase 3.0e: routes query_mileage to ESP32 via TCP
     {"cmd": "load_sample_report"}   ← Phase 3.0g: injects hardcoded demo report_result
+    {"cmd": "live_session_start"}   ← Phase 3.3a: spawn live_session.py relay
+    {"cmd": "live_session_stop"}    ← Phase 3.3a: stop live_session.py relay
+    {"cmd": "live_session_status"}  ← Phase 3.3a: query relay state
 
 Note: the new source-facing protocol (contract.py) is unrelated to this
 file. Translation happens in core.py.
@@ -86,6 +89,10 @@ _UI_MIN_PERIOD = 1.0 / UI_BROADCAST_HARD_HZ
 _BT_CONFIG_PATH  = pathlib.Path.home() / ".veya" / "bt_config.json"
 _BT_STATUS_FILE  = pathlib.Path("/tmp/veya_bt_bridge_status.txt")
 _bt_bridge_proc: Optional[subprocess.Popen] = None  # live bridge process
+
+# Live session relay subprocess state (module-level, Phase 3.3a)
+_LIVE_SESSION_STATUS_FILE = pathlib.Path("/tmp/veya_live_session_status.txt")
+_live_session_proc: Optional[subprocess.Popen] = None
 
 
 class UiWebSocketServer:
@@ -136,6 +143,7 @@ class UiWebSocketServer:
         await self._bt_boot_auto_spawn()
         # Background watcher: reacts to bridge connecting / disconnecting
         asyncio.create_task(self._bt_bridge_state_watcher())
+        asyncio.create_task(self._live_session_watcher())
 
     async def _bt_boot_auto_spawn(self) -> None:
         """Spawn bt_bridge at startup if bt_config.json contains a MAC."""
@@ -340,6 +348,22 @@ class UiWebSocketServer:
                 elif obj.get("cmd") == "load_sample_report":
                     log.info("[ws] ← load_sample_report from %s", peer)
                     asyncio.create_task(self._handle_load_sample_report())
+                # ── Live session relay commands (Phase 3.3a) ─────────────────
+                elif obj.get("cmd") == "live_session_start":
+                    log.info("[ws] ← live_session_start from %s", peer)
+                    self._live_session_start()
+                    state = self._live_session_read_status()
+                    if state == "stopped":
+                        state = "connecting"
+                    asyncio.create_task(self.broadcast_event({"type": "live_session_status", "state": state}))
+                elif obj.get("cmd") == "live_session_stop":
+                    log.info("[ws] ← live_session_stop from %s", peer)
+                    self._live_session_stop()
+                    asyncio.create_task(self.broadcast_event({"type": "live_session_status", "state": "stopped"}))
+                elif obj.get("cmd") == "live_session_status":
+                    log.info("[ws] ← live_session_status from %s", peer)
+                    state = self._live_session_read_status()
+                    asyncio.create_task(self.broadcast_event({"type": "live_session_status", "state": state}))
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -1049,6 +1073,70 @@ class UiWebSocketServer:
             log.error("[ws] load_sample_report failed: %s", exc)
             await self.broadcast_event({"type": "report_result", "ok": False, "report": None,
                                         "error": str(exc), "message": ""})
+
+    # ── Live session relay subprocess helpers (Phase 3.3a) ───────────────────
+
+    def _live_session_start(self) -> None:
+        global _live_session_proc
+        if _live_session_proc is not None and _live_session_proc.poll() is None:
+            log.info("[ws] live_session already running pid=%d", _live_session_proc.pid)
+            return
+        log_path = pathlib.Path.home() / "veya" / "logs" / "live_session.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path, "a")
+        try:
+            _live_session_proc = subprocess.Popen(
+                [sys.executable, "-m", "services.veya_core.live_session"],
+                stdout=log_fh,
+                stderr=log_fh,
+                start_new_session=True,
+            )
+            log.info("[ws] live_session started pid=%d", _live_session_proc.pid)
+        except Exception as exc:
+            log.error("[ws] live_session start failed: %s", exc)
+            _live_session_proc = None
+        finally:
+            log_fh.close()
+
+    def _live_session_stop(self) -> None:
+        global _live_session_proc
+        if _live_session_proc is not None:
+            if _live_session_proc.poll() is None:
+                try:
+                    _live_session_proc.send_signal(signal.SIGTERM)
+                    _live_session_proc.wait(timeout=3)
+                except Exception as exc:
+                    log.warning("[ws] live_session stop: %s", exc)
+                    try:
+                        _live_session_proc.kill()
+                    except Exception:
+                        pass
+                log.info("[ws] live_session stopped")
+            _live_session_proc = None
+
+    def _live_session_read_status(self) -> str:
+        global _live_session_proc
+        if _live_session_proc is None or _live_session_proc.poll() is not None:
+            _live_session_proc = None  # reap dead proc
+            return "stopped"
+        try:
+            return _LIVE_SESSION_STATUS_FILE.read_text().strip()
+        except FileNotFoundError:
+            return "connecting"
+
+    async def _live_session_watcher(self) -> None:
+        """Push live_session_status to all clients every 1.5s while proc is alive."""
+        global _live_session_proc
+        while True:
+            await asyncio.sleep(1.5)
+            if _live_session_proc is None:
+                continue
+            if _live_session_proc.poll() is not None:
+                _live_session_proc = None
+                await self.broadcast_event({"type": "live_session_status", "state": "stopped"})
+                continue
+            state = self._live_session_read_status()
+            await self.broadcast_event({"type": "live_session_status", "state": state})
 
     # ── Utility ───────────────────────────────────────────────────────────────
 

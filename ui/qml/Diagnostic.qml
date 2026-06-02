@@ -81,7 +81,7 @@ Page {
         onTriggered: {
             if (root.reportLoading) {
                 root.reportLoading = false
-                root.reportError   = "La requête a expiré — réessayez"
+                root.reportError   = "The request timed out — try again"
             }
         }
     }
@@ -462,7 +462,6 @@ Page {
                     width: root.width * 0.35
                     height: 220
                     radius: 16
-                    opacity: 0.45
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "#111F1E" }
                         GradientStop { position: 0.5; color: "#0E1418" }
@@ -476,21 +475,6 @@ Page {
 
                     scale: liveHover.pressed ? 0.98 : (liveHover.containsMouse ? 1.02 : 1.0)
                     Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-                    Rectangle {
-                        anchors.top: parent.top; anchors.right: parent.right
-                        anchors.topMargin: 12; anchors.rightMargin: 12
-                        width: 100; height: 24; radius: 12
-                        color: Qt.rgba(1, 1, 1, 0.08)
-                        border.color: Qt.rgba(1, 1, 1, 0.20); border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Coming soon"
-                            color: Qt.rgba(1, 1, 1, 0.50)
-                            font.pixelSize: 11; font.family: "DejaVu Sans"
-                        }
-                    }
 
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -520,7 +504,7 @@ Page {
 
                         Text {
                             Layout.alignment: Qt.AlignHCenter
-                            text: "Start Live Session"
+                            text: "Live Session"
                             color: root.cText
                             font.pixelSize: 24; font.bold: true
                             font.family: "DejaVu Sans"
@@ -529,7 +513,7 @@ Page {
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             Layout.maximumWidth: parent.width
-                            text: "Connect live with a remote expert for diagnosis"
+                            text: "Connect live with a remote expert"
                             color: Qt.rgba(1, 1, 1, 0.6)
                             font.pixelSize: 14; font.family: "DejaVu Sans"
                             wrapMode: Text.WordWrap
@@ -553,8 +537,11 @@ Page {
                         id: liveHover
                         anchors.fill: parent
                         hoverEnabled: true
-                        cursorShape: Qt.ArrowCursor
-                        onClicked: {}
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (root.nav)
+                                root.nav.push(Qt.resolvedUrl("LiveSessionScreen.qml"), { nav: root.nav })
+                        }
                     }
                 }
             }
@@ -572,35 +559,6 @@ Page {
             }
         }
 
-        // ── Sample demo link ──────────────────────────────────────────────
-        Item {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            Layout.bottomMargin: 2
-
-            Text {
-                id: sampleLink
-                anchors.centerIn: parent
-                text: "Voir un exemple →"
-                color: Qt.rgba(0.302, 0.824, 1.0, sampleMouse.containsMouse ? 0.85 : 0.45)
-                font.pixelSize: 12; font.family: "DejaVu Sans"
-                Behavior on color { ColorAnimation { duration: 150 } }
-
-                MouseArea {
-                    id: sampleMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (root.reportLoading) return
-                        root.reportError   = ""
-                        root.reportLoading = true
-                        reportTimeoutTimer.restart()
-                        VehicleDataProvider.sendCommand({ cmd: "load_sample_report" })
-                    }
-                }
-            }
-        }
     }
 
     // ── Hidden 5-tap developer unlock ────────────────────────────────────
